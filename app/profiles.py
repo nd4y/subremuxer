@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -18,17 +19,189 @@ OUTPUT_FORMATS = ("auto", "base64", "plain")
 
 TOKEN_BYTES = 16
 
-#: Presets for the "what should the panel think we are" selector. The upstream
-#: panel picks the subscription format from the User-Agent, so overriding it here
-#: is how an admin forces a particular family.
-USER_AGENT_PRESETS: list[dict[str, str]] = [
-    {"id": "client", "label": "Как у клиента (по умолчанию)", "value": ""},
-    {"id": "happ", "label": "Happ — Xray JSON", "value": "Happ/2.0"},
-    {"id": "singbox", "label": "sing-box — Sing-box JSON", "value": "SFI/1.11 sing-box"},
-    {"id": "mihomo", "label": "Mihomo / Clash — YAML", "value": "clash-verge/v2.0.0 mihomo"},
-    {"id": "v2rayn", "label": "v2rayN — base64", "value": "v2rayN/7.0"},
-    {"id": "browser", "label": "Браузер — HTML-страница", "value": "Mozilla/5.0"},
+#: Which client the panel should think it is talking to. The panel picks the
+#: subscription format from the User-Agent, so this both decides the format and —
+#: the actual point of this app — lets a client with no HWID support hide behind
+#: one that has it.
+CLIENT_PRESETS: list[dict[str, str]] = [
+    {
+        "id": "happ",
+        "label": "Happ",
+        "user_agent": "Happ/2.16.0",
+        "family": "Xray JSON",
+        "hint": "Задал стандарт HWID-заголовков — самый безопасный выбор для мимикрии",
+    },
+    {
+        "id": "v2raytun",
+        "label": "v2RayTun",
+        "user_agent": "v2RayTun/3.9.0",
+        "family": "Xray JSON",
+        "hint": "Поддерживает HWID, широко распространён",
+    },
+    {
+        "id": "streisand",
+        "label": "Streisand",
+        "user_agent": "Streisand/1.6.60",
+        "family": "Xray JSON",
+        "hint": "iOS-клиент на ядре Xray",
+    },
+    {
+        "id": "singbox",
+        "label": "sing-box (SFA / SFI / SFM)",
+        "user_agent": "SFA/1.11.0 sing-box/1.11.0",
+        "family": "Sing-box JSON",
+        "hint": "Официальные клиенты sing-box",
+    },
+    {
+        "id": "karing",
+        "label": "Karing",
+        "user_agent": "Karing/1.1.4.600",
+        "family": "Sing-box JSON",
+        "hint": "HWID по умолчанию выключен в самом клиенте",
+    },
+    {
+        "id": "hiddify",
+        "label": "Hiddify",
+        "user_agent": "HiddifyNext/2.5.7 sing-box",
+        "family": "Sing-box JSON",
+        "hint": "Кроссплатформенный клиент на ядре sing-box",
+    },
+    {
+        "id": "mihomo",
+        "label": "Clash Verge / Mihomo",
+        "user_agent": "clash-verge/v2.0.3 mihomo",
+        "family": "Clash / Mihomo YAML",
+        "hint": "Десктопный Clash-клиент",
+    },
+    {
+        "id": "flclash",
+        "label": "FlClash",
+        "user_agent": "FlClash/0.8.80 clash-meta",
+        "family": "Clash / Mihomo YAML",
+        "hint": "Мобильный Clash-клиент",
+    },
+    {
+        "id": "stash",
+        "label": "Stash",
+        "user_agent": "Stash/3.1.0 Clash",
+        "family": "Clash / Mihomo YAML",
+        "hint": "iOS-клиент на ядре Clash",
+    },
+    {
+        "id": "shadowrocket",
+        "label": "Shadowrocket",
+        "user_agent": "Shadowrocket/2.2.45",
+        "family": "Base64",
+        "hint": "HWID по умолчанию выключен в самом клиенте",
+    },
+    {
+        "id": "v2rayn",
+        "label": "v2rayN",
+        "user_agent": "v2rayN/7.12.4",
+        "family": "Base64",
+        "hint": "Десктопный клиент для Windows",
+    },
+    {
+        "id": "v2rayng",
+        "label": "v2rayNG",
+        "user_agent": "v2rayNG/1.9.30",
+        "family": "Base64",
+        "hint": "Android-клиент",
+    },
+    {
+        "id": "throne",
+        "label": "Throne",
+        "user_agent": "Throne/1.0.4",
+        "family": "Sing-box JSON",
+        "hint": "Продолжение NekoBox",
+    },
+    {
+        "id": "browser",
+        "label": "Браузер",
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        ),
+        "family": "HTML-страница",
+        "hint": "Панель отдаст человекочитаемую страницу, а не подписку",
+    },
+    {
+        "id": "passthrough",
+        "label": "Как у клиента (без мимикрии)",
+        "user_agent": "",
+        "family": "На усмотрение клиента",
+        "hint": "Панель увидит настоящий клиент — HWID придётся поддерживать ему самому",
+    },
 ]
+
+#: Device identity sent alongside the User-Agent. The panel uses it to tell
+#: devices apart in its list, so a believable pair matters.
+DEVICE_PRESETS: list[dict[str, str]] = [
+    {"id": "pixel9", "label": "Google Pixel 9", "os": "Android", "ver": "15", "model": "Pixel 9"},
+    {
+        "id": "pixel9pro",
+        "label": "Google Pixel 9 Pro",
+        "os": "Android",
+        "ver": "15",
+        "model": "Pixel 9 Pro",
+    },
+    {
+        "id": "galaxys24",
+        "label": "Samsung Galaxy S24 Ultra",
+        "os": "Android",
+        "ver": "14",
+        "model": "SM-S928B",
+    },
+    {"id": "xiaomi14", "label": "Xiaomi 14", "os": "Android", "ver": "14", "model": "23127PN0CG"},
+    {
+        "id": "iphone16pro",
+        "label": "iPhone 16 Pro",
+        "os": "iOS",
+        "ver": "18.5",
+        "model": "iPhone 16 Pro",
+    },
+    {
+        "id": "iphone14promax",
+        "label": "iPhone 14 Pro Max",
+        "os": "iOS",
+        "ver": "18.3",
+        "model": "iPhone 14 Pro Max",
+    },
+    {
+        "id": "ipadpro",
+        "label": "iPad Pro 11″",
+        "os": "iPadOS",
+        "ver": "18.5",
+        "model": "iPad Pro 11",
+    },
+    {"id": "windows11", "label": "ПК на Windows 11", "os": "Windows", "ver": "11", "model": "PC"},
+    {"id": "macos", "label": "Mac", "os": "macOS", "ver": "15.5", "model": "MacBook Pro"},
+    {"id": "none", "label": "Не отправлять данные устройства", "os": "", "ver": "", "model": ""},
+]
+
+#: What a brand-new profile looks like. Mimicry is on by default: the whole point
+#: of this app is attaching a client that cannot send an HWID itself, so out of
+#: the box we present ourselves to the panel as Happ on a Pixel 9.
+DEFAULT_CLIENT_PRESET = "happ"
+DEFAULT_DEVICE_PRESET = "pixel9"
+
+
+def _preset(presets: list[dict[str, str]], preset_id: str) -> dict[str, str]:
+    return next(item for item in presets if item["id"] == preset_id)
+
+
+def default_profile_fields() -> dict[str, Any]:
+    client = _preset(CLIENT_PRESETS, DEFAULT_CLIENT_PRESET)
+    device = _preset(DEVICE_PRESETS, DEFAULT_DEVICE_PRESET)
+    return {
+        "hwid_mode": "override",
+        "upstream_ua": client["user_agent"],
+        "client_preset": client["id"],
+        "device_preset": device["id"],
+        "device_os": device["os"],
+        "device_ver": device["ver"],
+        "device_model": device["model"],
+    }
 
 
 class ProfileError(ValueError):
@@ -37,6 +210,16 @@ class ProfileError(ValueError):
 
 def new_token() -> str:
     return secrets.token_urlsafe(TOKEN_BYTES)
+
+
+def _unique_copy_name(name: str, taken: set[str]) -> str:
+    base = re.sub(r"\s*\(копия(?:\s+\d+)?\)$", "", name).strip() or "Профиль"
+    candidate = f"{base} (копия)"
+    index = 2
+    while candidate in taken:
+        candidate = f"{base} (копия {index})"
+        index += 1
+    return candidate[:120]
 
 
 @dataclass(slots=True)
@@ -106,7 +289,7 @@ class Profile:
         return CompiledFilter.build(self.filter_config, self.protocols)
 
 
-def _validate(payload: dict[str, Any]) -> dict[str, Any]:
+def validate_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
     name = str(payload.get("name", "")).strip()
     if not name:
         raise ProfileError("укажите название профиля")
@@ -170,21 +353,29 @@ class ProfileRepository:
         self.db = db
 
     def list(self) -> list[Profile]:
-        rows = self.db.query("SELECT * FROM profiles ORDER BY id DESC")
+        rows = self.db.query("SELECT * FROM profiles WHERE deleted_at IS NULL ORDER BY id DESC")
         return [Profile.from_row(row) for row in rows]
 
-    def get(self, profile_id: int) -> Profile | None:
-        row = self.db.query_one("SELECT * FROM profiles WHERE id = ?", (profile_id,))
+    def get(self, profile_id: int, *, include_deleted: bool = False) -> Profile | None:
+        clause = "" if include_deleted else " AND deleted_at IS NULL"
+        row = self.db.query_one(f"SELECT * FROM profiles WHERE id = ?{clause}", (profile_id,))
         return Profile.from_row(row) if row else None
 
     def get_by_token(self, token: str) -> Profile | None:
-        row = self.db.query_one("SELECT * FROM profiles WHERE token = ?", (token,))
+        row = self.db.query_one(
+            "SELECT * FROM profiles WHERE token = ? AND deleted_at IS NULL", (token,)
+        )
         return Profile.from_row(row) if row else None
 
     def create(self, payload: dict[str, Any]) -> Profile:
-        fields = _validate(payload)
+        fields = validate_profile_payload(payload)
         now = int(time.time())
         token = str(payload.get("token") or "").strip() or new_token()
+        # A caller-supplied token (import, config editor) may already belong to a
+        # row — including a soft-deleted one. Falling back to a fresh token beats
+        # failing the whole import over a link that was going to change anyway.
+        if self.db.query_one("SELECT 1 FROM profiles WHERE token = ?", (token,)) is not None:
+            token = new_token()
         cursor = self.db.execute(
             """
             INSERT INTO profiles(
@@ -221,7 +412,7 @@ class ProfileRepository:
         existing = self.get(profile_id)
         if existing is None:
             raise ProfileError("профиль не найден")
-        fields = _validate(payload)
+        fields = validate_profile_payload(payload)
         self.db.execute(
             """
             UPDATE profiles SET
@@ -253,8 +444,46 @@ class ProfileRepository:
         return updated
 
     def delete(self, profile_id: int) -> bool:
-        cursor = self.db.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        """Soft delete: the link stops working at once, but Undo can still bring it back.
+
+        The row is purged for real by the maintenance pass once the undo window has
+        long expired.
+        """
+        cursor = self.db.execute(
+            "UPDATE profiles SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+            (int(time.time()), profile_id),
+        )
         return cursor.rowcount > 0
+
+    def restore(self, profile_id: int) -> Profile:
+        cursor = self.db.execute(
+            "UPDATE profiles SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+            (profile_id,),
+        )
+        if cursor.rowcount == 0:
+            raise ProfileError("профиль уже удалён окончательно")
+        profile = self.get(profile_id)
+        if profile is None:  # pragma: no cover - only on a storage failure
+            raise ProfileError("профиль не найден")
+        return profile
+
+    def purge_deleted(self, older_than_seconds: int) -> int:
+        # Inclusive, so purge_deleted(0) means "everything deleted so far" rather
+        # than silently sparing whatever was deleted in the current second.
+        cutoff = int(time.time()) - older_than_seconds
+        cursor = self.db.execute(
+            "DELETE FROM profiles WHERE deleted_at IS NOT NULL AND deleted_at <= ?", (cutoff,)
+        )
+        return cursor.rowcount
+
+    def clone(self, profile_id: int) -> Profile:
+        source = self.get(profile_id)
+        if source is None:
+            raise ProfileError("профиль не найден")
+        payload = source.as_dict()
+        payload["name"] = _unique_copy_name(source.name, {p.name for p in self.list()})
+        payload.pop("token", None)
+        return self.create(payload)
 
     def rotate_token(self, profile_id: int) -> Profile:
         token = new_token()

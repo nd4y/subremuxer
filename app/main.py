@@ -16,8 +16,10 @@ from fastapi.staticfiles import StaticFiles
 from .config import Settings, get_settings
 from .db import Database
 from .pipeline import UpstreamCache
-from .routers import admin, subscription
+from .profiles import ProfileRepository
+from .routers import admin, probe, subscription
 from .security import LoginThrottle
+from .templates import TemplateRepository
 from .upstream import UpstreamFetcher
 
 logger = logging.getLogger("subremuxer")
@@ -25,6 +27,10 @@ logger = logging.getLogger("subremuxer")
 STATIC_DIR = Path(__file__).parent / "static"
 
 PRUNE_INTERVAL_SECONDS = 3600
+
+#: How long a deleted profile stays recoverable. The UI offers Undo for a few
+#: seconds; this is the far larger safety net behind it.
+DELETED_PROFILE_GRACE_SECONDS = 24 * 3600
 
 
 async def _maintenance_loop(app: FastAPI) -> None:
@@ -35,6 +41,7 @@ async def _maintenance_loop(app: FastAPI) -> None:
             await asyncio.sleep(PRUNE_INTERVAL_SECONDS)
             db.purge_sessions()
             db.prune_logs(settings.log_retention_days, settings.log_max_rows)
+            ProfileRepository(db).purge_deleted(DELETED_PROFILE_GRACE_SECONDS)
         except asyncio.CancelledError:
             raise
         except Exception:  # pragma: no cover - maintenance must never kill the app
@@ -54,6 +61,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         app.state.db.purge_sessions()
         app.state.db.prune_logs(settings.log_retention_days, settings.log_max_rows)
+        ProfileRepository(app.state.db).purge_deleted(DELETED_PROFILE_GRACE_SECONDS)
+        seeded = TemplateRepository(app.state.db).seed_builtins()
+        if seeded:
+            logger.info("добавлено встроенных шаблонов: %s", seeded)
 
         if settings.generated_password:
             logger.warning(
@@ -86,6 +97,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin.router)
     app.include_router(admin.guarded)
     app.include_router(subscription.router)
+    app.include_router(probe.router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:

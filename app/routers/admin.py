@@ -20,12 +20,26 @@ from ..filtering import (
 from ..formats import FORMAT_LABELS, KNOWN_PROTOCOLS
 from ..logs import LogRepository
 from ..pipeline import Defaults, preview_filter
+from ..portability import (
+    ConfigApplier,
+    Importer,
+    PortabilityError,
+    dump,
+    export_bundle,
+    export_profile,
+)
+from ..portability import parse as parse_document
+from ..probe import ProbeRepository, get_probe_token, rotate_probe_token
 from ..profiles import (
+    CLIENT_PRESETS,
+    DEFAULT_CLIENT_PRESET,
+    DEFAULT_DEVICE_PRESET,
+    DEVICE_PRESETS,
     OUTPUT_FORMATS,
-    USER_AGENT_PRESETS,
     Profile,
     ProfileError,
     ProfileRepository,
+    default_profile_fields,
 )
 from ..security import (
     SESSION_COOKIE,
@@ -34,6 +48,7 @@ from ..security import (
     issue_session,
     require_admin,
 )
+from ..templates import TemplateError, TemplateRepository, apply_template
 from ..upstream import HWID_MODES, hwid_is_valid
 
 router = APIRouter(prefix="/api")
@@ -46,6 +61,14 @@ def _repo(request: Request) -> ProfileRepository:
 
 def _logs(request: Request) -> LogRepository:
     return LogRepository(request.app.state.db)
+
+
+def _templates(request: Request) -> TemplateRepository:
+    return TemplateRepository(request.app.state.db)
+
+
+def _probes(request: Request) -> ProbeRepository:
+    return ProbeRepository(request.app.state.db)
 
 
 # ----------------------------------------------------------------------- auth
@@ -106,7 +129,11 @@ async def meta() -> dict[str, Any]:
         "protocols": list(KNOWN_PROTOCOLS),
         "condition_ops": CONDITION_OPS,
         "presets": PRESETS,
-        "user_agent_presets": USER_AGENT_PRESETS,
+        "client_presets": CLIENT_PRESETS,
+        "device_presets": DEVICE_PRESETS,
+        "default_client_preset": DEFAULT_CLIENT_PRESET,
+        "default_device_preset": DEFAULT_DEVICE_PRESET,
+        "default_profile": default_profile_fields(),
         "hwid_modes": list(HWID_MODES),
         "output_formats": list(OUTPUT_FORMATS),
         "format_labels": {key.value: value for key, value in FORMAT_LABELS.items()},
@@ -146,10 +173,36 @@ async def list_profiles(request: Request) -> list[dict[str, Any]]:
 
 @guarded.post("/profiles", status_code=201)
 async def create_profile(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    template_id = payload.pop("template_id", None)
     try:
+        if template_id:
+            template = _templates(request).get(int(template_id))
+            if template is None:
+                raise HTTPException(status_code=404, detail="Шаблон не найден")
+            payload = apply_template(template, payload)
         profile = _repo(request).create(payload)
-    except (ProfileError, FilterError) as exc:
+    except (ProfileError, FilterError, TemplateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+
+
+@guarded.post("/profiles/{profile_id}/clone", status_code=201)
+async def clone_profile(request: Request, profile_id: int) -> dict[str, Any]:
+    try:
+        profile = _repo(request).clone(profile_id)
+    except (ProfileError, FilterError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+
+
+@guarded.post("/profiles/{profile_id}/restore")
+async def restore_profile(request: Request, profile_id: int) -> dict[str, Any]:
+    """Undo a delete. The row is still there until the maintenance pass purges it."""
+    try:
+        profile = _repo(request).restore(profile_id)
+    except ProfileError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    request.app.state.cache.invalidate_profile(profile_id)
     return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
 
 
@@ -206,6 +259,227 @@ def qr_svg(data: str) -> str:
     buffer = io.BytesIO()
     qr.save(buffer, kind="svg", scale=8, border=2, dark="#000000", light="#ffffff")
     return buffer.getvalue().decode("utf-8")
+
+
+# ------------------------------------------------------------ export/import
+
+EXPORT_MEDIA_TYPES = {
+    "json": "application/json; charset=utf-8",
+    "yaml": "application/yaml; charset=utf-8",
+}
+
+
+def _export_response(document: dict[str, Any], fmt: str, filename: str) -> Response:
+    if fmt not in EXPORT_MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail=f"неизвестный формат: {fmt}")
+    try:
+        body = dump(document, fmt)
+    except PortabilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=body,
+        media_type=EXPORT_MEDIA_TYPES[fmt],
+        headers={"content-disposition": f'attachment; filename="{filename}.{fmt}"'},
+    )
+
+
+@guarded.get("/profiles/{profile_id}/export")
+async def export_single_profile(
+    request: Request, profile_id: int, format: str = "yaml", with_token: bool = True
+) -> Response:
+    profile = _repo(request).get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    document = export_profile(profile.as_dict(), with_token=with_token)
+    return _export_response(document, format, f"subremuxer-profile-{profile.id}")
+
+
+@guarded.get("/export")
+async def export_everything(
+    request: Request, format: str = "yaml", with_tokens: bool = True
+) -> Response:
+    """The whole configuration: settings, templates and every profile."""
+    document = export_bundle(
+        [profile.as_dict() for profile in _repo(request).list()],
+        [template.as_dict() for template in _templates(request).list()],
+        request.app.state.db.all_settings(),
+        with_tokens=with_tokens,
+    )
+    return _export_response(document, format, "subremuxer-config")
+
+
+@guarded.post("/import")
+async def import_configuration(
+    request: Request, payload: dict[str, Any] = Body(...)
+) -> dict[str, Any]:
+    try:
+        document = parse_document(str(payload.get("content") or ""))
+    except PortabilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    importer = Importer(_repo(request), _templates(request), request.app.state.db)
+    try:
+        result = importer.apply(
+            document,
+            keep_tokens=bool(payload.get("keep_tokens", False)),
+            with_settings=bool(payload.get("with_settings", True)),
+        )
+    except PortabilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    request.app.state.cache = type(request.app.state.cache)()
+    return {
+        "kind": document["kind"],
+        "profiles_created": result["profiles_created"],
+        "templates_created": result["templates_created"],
+        "settings_applied": result["settings_applied"],
+        "errors": result["errors"],
+    }
+
+
+# -------------------------------------------------------------- config editor
+
+
+def _current_bundle(request: Request) -> dict[str, Any]:
+    return export_bundle(
+        [profile.as_dict() for profile in _repo(request).list()],
+        [template.as_dict() for template in _templates(request).list()],
+        request.app.state.db.all_settings(),
+        with_tokens=True,
+    )
+
+
+@guarded.get("/config")
+async def read_config(request: Request, format: str = "yaml") -> dict[str, Any]:
+    """The whole configuration as editable text, for the built-in editor."""
+    if format not in EXPORT_MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail=f"неизвестный формат: {format}")
+    return {"format": format, "content": dump(_current_bundle(request), format)}
+
+
+@guarded.post("/config/validate")
+async def validate_config(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Dry run: parse, validate and describe the change without touching anything."""
+    try:
+        document = parse_document(str(payload.get("content") or ""))
+        plan = ConfigApplier(_repo(request), _templates(request), request.app.state.db).plan(
+            document
+        )
+    except PortabilityError as exc:
+        return {"ok": False, "errors": [str(exc)], "summary": None}
+    plan.pop("_plan", None)
+    return plan
+
+
+@guarded.put("/config")
+async def write_config(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Make the instance match the edited document. Validated in full beforehand."""
+    try:
+        document = parse_document(str(payload.get("content") or ""))
+        result = ConfigApplier(_repo(request), _templates(request), request.app.state.db).apply(
+            document
+        )
+    except PortabilityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    request.app.state.cache = type(request.app.state.cache)()
+    fmt = str(payload.get("format") or "yaml")
+    if fmt not in EXPORT_MEDIA_TYPES:
+        fmt = "yaml"
+    result["content"] = dump(_current_bundle(request), fmt)
+    result["format"] = fmt
+    return result
+
+
+# ------------------------------------------------------------------ templates
+
+
+@guarded.get("/templates")
+async def list_templates(request: Request) -> list[dict[str, Any]]:
+    return [template.as_dict() for template in _templates(request).list()]
+
+
+@guarded.post("/templates", status_code=201)
+async def create_template(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    payload.pop("builtin_id", None)  # only the app itself may claim a built-in id
+    try:
+        template = _templates(request).create(payload)
+    except (TemplateError, FilterError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return template.as_dict()
+
+
+@guarded.post("/templates/from-profile/{profile_id}", status_code=201)
+async def template_from_profile(
+    request: Request, profile_id: int, payload: dict[str, Any] = Body(default={})
+) -> dict[str, Any]:
+    profile = _repo(request).get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    name = str(payload.get("name") or f"Из профиля «{profile.name}»")
+    try:
+        template = _templates(request).from_profile(
+            profile.as_dict(), name, str(payload.get("description") or "")
+        )
+    except (TemplateError, FilterError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return template.as_dict()
+
+
+@guarded.put("/templates/{template_id}")
+async def update_template(
+    request: Request, template_id: int, payload: dict[str, Any] = Body(...)
+) -> dict[str, Any]:
+    try:
+        template = _templates(request).update(template_id, payload)
+    except (TemplateError, FilterError) as exc:
+        status = 404 if "не найден" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return template.as_dict()
+
+
+@guarded.delete("/templates/{template_id}")
+async def delete_template(request: Request, template_id: int) -> dict[str, bool]:
+    if not _templates(request).delete(template_id):
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    return {"ok": True}
+
+
+@guarded.post("/templates/restore-builtins")
+async def restore_builtin_templates(request: Request) -> dict[str, Any]:
+    return {"restored": _templates(request).restore_builtins()}
+
+
+# ---------------------------------------------------------------- capture
+
+
+@guarded.get("/probe")
+async def probe_info(request: Request) -> dict[str, Any]:
+    token = get_probe_token(request.app.state.db)
+    return {
+        "token": token,
+        "url": f"{_public_base(request)}/probe/{token}",
+        "captures": _probes(request).list(),
+    }
+
+
+@guarded.post("/probe/rotate")
+async def probe_rotate(request: Request) -> dict[str, Any]:
+    token = rotate_probe_token(request.app.state.db)
+    return {"token": token, "url": f"{_public_base(request)}/probe/{token}"}
+
+
+@guarded.get("/probe/qr.svg")
+async def probe_qr(request: Request) -> Response:
+    token = get_probe_token(request.app.state.db)
+    return Response(
+        content=qr_svg(f"{_public_base(request)}/probe/{token}"), media_type="image/svg+xml"
+    )
+
+
+@guarded.delete("/probe/captures")
+async def clear_captures(request: Request, capture_id: int | None = None) -> dict[str, int]:
+    return {"deleted": _probes(request).clear(capture_id)}
 
 
 # ------------------------------------------------------------- filter testing

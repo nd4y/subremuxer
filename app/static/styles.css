@@ -43,6 +43,7 @@
   --outline-variant: #cac4d0;
   --inverse-surface: #322f35;
   --inverse-on-surface: #f5eff7;
+  --inverse-primary: #d0bcff;
   --scrim-color: 0 0 0;
 
   /* Shape — deliberately large; this is the loudest Expressive signal. */
@@ -110,6 +111,7 @@
     --outline-variant: #49454f;
     --inverse-surface: #e6e0e9;
     --inverse-on-surface: #322f35;
+    --inverse-primary: #6750a4;
     --scrim-color: 0 0 0;
   }
 }
@@ -148,6 +150,7 @@
   --outline-variant: #49454f;
   --inverse-surface: #e6e0e9;
   --inverse-on-surface: #322f35;
+  --inverse-primary: #6750a4;
 }
 
 /* -------------------------------------------------------------------- base */
@@ -700,7 +703,13 @@ svg {
 }
 
 .empty {
+  /* A fixed footprint: swapping skeletons or a list for this must not make the
+     page jump, and the rounded corners must never appear to flicker. */
+  min-height: 232px;
   padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   text-align: center;
   color: var(--on-surface-variant);
   border-radius: var(--shape-xl);
@@ -1437,6 +1446,18 @@ svg {
   flex: 1;
 }
 
+.toolbar__title {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.list[aria-busy="true"] {
+  opacity: 0.55;
+  transition: opacity var(--dur-short) var(--ease-standard);
+}
+
 /* -------------------------------------------------------------- log entry */
 
 .log {
@@ -1557,6 +1578,7 @@ svg {
   bottom: calc(var(--navbar-height) + env(safe-area-inset-bottom) + 16px);
   z-index: 60;
   transform: translateX(-50%);
+  width: max-content;
   max-width: min(560px, calc(100vw - 32px));
   padding: 14px 20px;
   border-radius: var(--shape-m);
@@ -1565,6 +1587,86 @@ svg {
   box-shadow: var(--elev-3);
   font-size: 0.9rem;
   animation: snack-in var(--dur-medium) var(--ease-spring) both;
+}
+
+.snackbar--action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 20px;
+}
+
+.snackbar__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.snackbar__action {
+  flex: none;
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: var(--shape-full);
+  color: var(--inverse-primary, #d0bcff);
+  font-weight: 700;
+  font-size: 0.9rem;
+  transition:
+    background-color var(--dur-short) var(--ease-standard),
+    border-radius var(--dur-medium) var(--ease-spring),
+    transform var(--dur-short) var(--ease-standard);
+}
+
+.snackbar__action:active {
+  transform: scale(0.95);
+  border-radius: var(--shape-s);
+}
+
+@media (hover: hover) {
+  .snackbar__action:hover {
+    background: color-mix(in srgb, var(--inverse-on-surface) 14%, transparent);
+  }
+}
+
+/* The undo window, drawn as a depleting ring around the remaining seconds. */
+.countdown {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+}
+
+.countdown svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+.countdown__track {
+  stroke: color-mix(in srgb, var(--inverse-on-surface) 25%, transparent);
+}
+
+.countdown__progress {
+  stroke: var(--inverse-primary, #d0bcff);
+  stroke-linecap: round;
+  stroke-dasharray: 62.83; /* 2πr, r = 10 */
+  animation: countdown-deplete var(--countdown-duration, 7000ms) linear both;
+}
+
+.countdown__value {
+  position: relative;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes countdown-deplete {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 62.83;
+  }
 }
 
 .snackbar--error {
@@ -1588,6 +1690,330 @@ svg {
     opacity: 0;
     transform: translate(-50%, 12px);
   }
+}
+
+/* -------------------------------------------------------------- templates */
+
+.template-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  text-align: left;
+  border-radius: var(--shape-l);
+  background: var(--surface-container);
+  color: inherit;
+  transition:
+    background-color var(--dur-short) var(--ease-standard),
+    border-radius var(--dur-medium) var(--ease-spring),
+    transform var(--dur-short) var(--ease-standard);
+}
+
+.template-card:active {
+  transform: scale(0.98);
+  border-radius: var(--shape-xl);
+}
+
+@media (hover: hover) {
+  .template-card:hover {
+    background: var(--surface-container-high);
+  }
+}
+
+.template-card__name {
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.template-card__desc {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+.template-card__badges,
+.template-row__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.list--templates {
+  gap: 8px;
+}
+
+.template-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px 12px 14px;
+  border-radius: var(--shape-l);
+  background: var(--surface-container);
+}
+
+.template-row__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.template-row__name {
+  font-size: 0.95rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.template-row__desc {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ probe */
+
+.probe {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.probe__qr {
+  width: min(240px, 62vw);
+  flex: none;
+}
+
+.probe__side {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.capture {
+  border-radius: var(--shape-xl);
+  background: var(--surface-container-low);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+
+.capture__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.capture__title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.capture__name {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.capture__meta {
+  font-size: 0.78rem;
+  color: var(--on-surface-variant);
+}
+
+.capture__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------- code editor */
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.editor-toolbar .segmented {
+  width: auto;
+  min-width: 180px;
+}
+
+.editor {
+  display: flex;
+  min-height: 320px;
+  height: clamp(320px, 48dvh, 620px);
+  border-radius: var(--shape-m);
+  background: var(--surface-container-highest);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  /* 16px keeps iOS from zooming the viewport when the textarea takes focus. */
+  font-size: 16px;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.editor__gutter {
+  flex: none;
+  width: 3.5em;
+  padding: 12px 8px 12px 0;
+  overflow: hidden;
+  text-align: right;
+  color: var(--on-surface-variant);
+  opacity: 0.6;
+  user-select: none;
+  border-right: 1px solid var(--outline-variant);
+}
+
+.editor__lines {
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+  will-change: transform;
+}
+
+.editor__area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.editor__highlight,
+.editor__input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 12px 14px;
+  border: none;
+  font: inherit;
+  line-height: inherit;
+  tab-size: inherit;
+  white-space: pre;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.editor__highlight {
+  pointer-events: none;
+  color: var(--on-surface);
+  background: transparent;
+  scrollbar-width: none;
+}
+
+.editor__highlight::-webkit-scrollbar {
+  display: none;
+}
+
+.editor__input {
+  background: transparent;
+  color: transparent;
+  caret-color: var(--primary);
+  resize: none;
+  -webkit-text-fill-color: transparent;
+}
+
+.editor__input:focus {
+  outline: none;
+}
+
+.editor__input::selection {
+  background: color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+.tok-key {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.tok-str {
+  color: #2e6b4f;
+}
+
+.tok-num,
+.tok-lit {
+  color: #7d5260;
+}
+
+.tok-com {
+  color: var(--on-surface-variant);
+  opacity: 0.75;
+  font-style: italic;
+}
+
+:root[data-theme="dark"] .tok-str,
+:root[data-theme="auto"] .tok-str {
+  color: #8fd6b4;
+}
+
+:root[data-theme="dark"] .tok-num,
+:root[data-theme="dark"] .tok-lit,
+:root[data-theme="auto"] .tok-num,
+:root[data-theme="auto"] .tok-lit {
+  color: #efb8c8;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] .tok-str {
+    color: #2e6b4f;
+  }
+  :root[data-theme="auto"] .tok-num,
+  :root[data-theme="auto"] .tok-lit {
+    color: #7d5260;
+  }
+}
+
+.editor-status {
+  padding: 12px 14px;
+  border-radius: var(--shape-m);
+  background: var(--surface-container);
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editor-status:empty {
+  display: none;
+}
+
+.editor-status--ok {
+  background: var(--success-container);
+  color: var(--on-success-container);
+}
+
+.editor-status--error {
+  background: var(--error-container);
+  color: var(--on-error-container);
+}
+
+.editor-status__title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.editor-status__line {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 /* -------------------------------------------------------------- skeletons */
@@ -1752,6 +2178,15 @@ svg {
     grid-template-columns: 220px 1fr;
   }
 
+  .probe {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .template-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   /* Bottom sheet becomes a centred dialog. */
   .sheet {
     inset: 50% auto auto 50%;
@@ -1764,6 +2199,17 @@ svg {
 
   .sheet.is-closing {
     animation: dialog-out var(--dur-short) var(--ease-standard) both;
+  }
+
+  .sheet--wide {
+    width: min(1040px, calc(100vw - 64px));
+    max-height: min(92dvh, 1000px);
+  }
+
+  .sheet--wide .editor {
+    /* Roomier on a desktop, where the config is actually edited. */
+    height: clamp(360px, 56dvh, 700px);
+    font-size: 13.5px;
   }
 
   .sheet__handle {

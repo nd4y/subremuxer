@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     upstream_ua    TEXT,
     cache_ttl      INTEGER NOT NULL DEFAULT 0,
     created_at     INTEGER NOT NULL,
-    updated_at     INTEGER NOT NULL
+    updated_at     INTEGER NOT NULL,
+    deleted_at     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS request_logs (
@@ -95,7 +96,39 @@ CREATE TABLE IF NOT EXISTS request_log_nodes (
     FOREIGN KEY(log_id) REFERENCES request_logs(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_log_nodes_log ON request_log_nodes(log_id);
+
+CREATE TABLE IF NOT EXISTS probe_captures (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    first_ts     INTEGER NOT NULL,
+    last_ts      INTEGER NOT NULL,
+    seen_count   INTEGER NOT NULL DEFAULT 1,
+    client_ip    TEXT,
+    user_agent   TEXT NOT NULL DEFAULT '',
+    hwid         TEXT NOT NULL DEFAULT '',
+    device_os    TEXT NOT NULL DEFAULT '',
+    device_ver   TEXT NOT NULL DEFAULT '',
+    device_model TEXT NOT NULL DEFAULT '',
+    headers_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_probe_last_ts ON probe_captures(last_ts DESC);
+
+CREATE TABLE IF NOT EXISTS profile_templates (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL,
+    description  TEXT    NOT NULL DEFAULT '',
+    builtin_id   TEXT,
+    payload_json TEXT    NOT NULL DEFAULT '{}',
+    sort_order   INTEGER NOT NULL DEFAULT 100,
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_builtin ON profile_templates(builtin_id)
+    WHERE builtin_id IS NOT NULL;
 """
+
+#: Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
+#: EXISTS", so upgrades are applied by inspecting the table.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("profiles", "deleted_at", "INTEGER"),)
 
 
 class Database:
@@ -143,6 +176,10 @@ class Database:
     def migrate(self) -> None:
         with self.tx() as conn:
             conn.executescript(_SCHEMA)
+            for table, column, decl in _ADDED_COLUMNS:
+                existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

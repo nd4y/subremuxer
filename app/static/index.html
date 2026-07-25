@@ -51,6 +51,12 @@
       </span>
       <span class="rail__label">Профили</span>
     </button>
+    <button class="rail__item" data-route="probe" type="button">
+      <span class="rail__icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.6 19.4a10.5 10.5 0 0 1 0-14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </span>
+      <span class="rail__label">Захват</span>
+    </button>
     <button class="rail__item" data-route="logs" type="button">
       <span class="rail__icon">
         <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -87,6 +93,33 @@
     <div class="page" id="page-profiles" data-page="profiles">
       <section class="stats" id="stats"></section>
       <div class="list" id="profiles-list"></div>
+    </div>
+
+    <div class="page" id="page-probe" data-page="probe" hidden>
+      <div class="card card--form">
+        <h2 class="card__title">Ссылка для захвата</h2>
+        <p class="card__hint">
+          Добавьте её в клиент как обычную подписку — приложение запомнит HWID, модель
+          устройства и User-Agent, которые клиент прислал. Сам клиент увидит их же
+          в названиях серверов. Ничего не проксируется и никуда не отправляется.
+        </p>
+        <div class="probe">
+          <div class="qr__frame probe__qr"><img id="probe-qr" alt="QR-код для захвата"></div>
+          <div class="probe__side">
+            <div class="qr__url" id="probe-url"></div>
+            <div class="card__actions">
+              <button class="btn btn--tonal btn--small" id="probe-copy" type="button">Скопировать</button>
+              <button class="btn btn--outlined btn--small" id="probe-rotate" type="button">Сменить ссылку</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <h2 class="toolbar__title">Захваченные устройства</h2>
+        <button class="btn btn--text" id="probe-clear" type="button">Очистить</button>
+      </div>
+      <div class="list" id="probe-list"></div>
     </div>
 
     <div class="page" id="page-logs" data-page="logs" hidden>
@@ -132,6 +165,33 @@
       </div>
 
       <div class="card card--form">
+        <h2 class="card__title">Шаблоны профилей</h2>
+        <p class="card__hint">
+          Шаблон хранит всё, кроме названия и ссылки на подписку: мимикрию, режим HWID,
+          фильтр и протоколы. Новый профиль можно создать из шаблона одним нажатием.
+        </p>
+        <div class="list list--templates" id="templates-list"></div>
+        <div class="card__actions">
+          <button class="btn btn--tonal btn--small" id="template-new" type="button">Новый шаблон</button>
+          <button class="btn btn--outlined btn--small" id="templates-restore" type="button">Восстановить встроенные</button>
+        </div>
+      </div>
+
+      <div class="card card--form">
+        <h2 class="card__title">Экспорт и импорт</h2>
+        <p class="card__hint">
+          Полный слепок конфигурации: значения по умолчанию, шаблоны и все профили.
+          Файл содержит токены подписок и HWID — храните его как секрет.
+        </p>
+        <div class="card__actions">
+          <button class="btn btn--filled btn--small" id="config-editor" type="button">Редактор конфигурации</button>
+          <button class="btn btn--tonal btn--small" id="export-yaml" type="button">Скачать YAML</button>
+          <button class="btn btn--tonal btn--small" id="export-json" type="button">Скачать JSON</button>
+          <button class="btn btn--outlined btn--small" id="import-open" type="button">Импорт</button>
+        </div>
+      </div>
+
+      <div class="card card--form">
         <h2 class="card__title">Оформление</h2>
         <div class="segmented" id="theme-segmented" role="group" aria-label="Тема оформления">
           <button class="segmented__item" data-theme="light" type="button">Светлая</button>
@@ -158,6 +218,10 @@
     <button class="navbar__item" data-route="profiles" type="button">
       <span class="navbar__pill"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></span>
       <span class="navbar__label">Профили</span>
+    </button>
+    <button class="navbar__item" data-route="probe" type="button">
+      <span class="navbar__pill"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.6 19.4a10.5 10.5 0 0 1 0-14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+      <span class="navbar__label">Захват</span>
     </button>
     <button class="navbar__item" data-route="logs" type="button">
       <span class="navbar__pill"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
