@@ -1,0 +1,23 @@
+services:
+  subremuxer:
+    image: ghcr.io/nd4y/subremuxer:latest
+    # Swap the line above for `build: .` to run a local checkout.
+    container_name: subremuxer
+    restart: unless-stopped
+    environment:
+      # Required. Without it a random password is generated and logged once.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      # The origin clients will use; subscription links are built from it.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Set to true once the app is served over HTTPS.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-30}
+      LOG_MAX_ROWS: ${LOG_MAX_ROWS:-20000}
+      UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-20}
+      # Route upstream fetches through a proxy, e.g. http://127.0.0.1:8082
+      UPSTREAM_PROXY: ${UPSTREAM_PROXY:-}
+      TZ: ${TZ:-Europe/Moscow}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PORT:-8000}:8000"
+    volumes:
+      - ./data:/data

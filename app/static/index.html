@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ru" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fef7ff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141218" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>subremuxer</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<!-- ─────────────────────────────── login ─────────────────────────────── -->
+<div id="login" class="login" hidden>
+  <form class="login__card" id="login-form" autocomplete="on">
+    <div class="login__mark" aria-hidden="true">
+      <svg viewBox="0 0 48 48" width="56" height="56">
+        <path d="M8 14h32M8 24h20M8 34h26" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="38" cy="30" r="7" fill="none" stroke="currentColor" stroke-width="4"/>
+      </svg>
+    </div>
+    <h1 class="login__title">subremuxer</h1>
+    <p class="login__subtitle">Фильтрующий прокси для подписок</p>
+    <label class="field">
+      <input class="field__input" type="password" id="login-password" name="password"
+             placeholder=" " autocomplete="current-password" required>
+      <span class="field__label">Пароль администратора</span>
+    </label>
+    <p class="login__error" id="login-error" role="alert" hidden></p>
+    <button class="btn btn--filled btn--full" type="submit" id="login-submit">Войти</button>
+  </form>
+</div>
+
+<!-- ─────────────────────────────── shell ─────────────────────────────── -->
+<div id="shell" class="shell" hidden>
+
+  <nav class="rail" aria-label="Разделы">
+    <div class="rail__brand" aria-hidden="true">
+      <svg viewBox="0 0 48 48" width="32" height="32">
+        <path d="M8 14h32M8 24h20M8 34h26" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="38" cy="30" r="7" fill="none" stroke="currentColor" stroke-width="4"/>
+      </svg>
+    </div>
+    <button class="rail__item" data-route="profiles" type="button">
+      <span class="rail__icon">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+      </span>
+      <span class="rail__label">Профили</span>
+    </button>
+    <button class="rail__item" data-route="logs" type="button">
+      <span class="rail__icon">
+        <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </span>
+      <span class="rail__label">Логи</span>
+    </button>
+    <button class="rail__item" data-route="settings" type="button">
+      <span class="rail__icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6M17.9 17.9l-1.6-1.6M7.7 7.7 6.1 6.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </span>
+      <span class="rail__label">Настройки</span>
+    </button>
+    <div class="rail__spacer"></div>
+    <button class="rail__item rail__item--minor" id="rail-theme" type="button" title="Тема">
+      <span class="rail__icon" id="theme-icon"></span>
+      <span class="rail__label">Тема</span>
+    </button>
+  </nav>
+
+  <main class="main" id="main">
+    <header class="topbar">
+      <div class="topbar__row">
+        <h1 class="topbar__title" id="page-title">Профили</h1>
+        <div class="topbar__actions">
+          <button class="icon-btn icon-btn--mobile" id="topbar-theme" type="button" aria-label="Сменить тему"></button>
+          <button class="icon-btn" id="topbar-logout" type="button" aria-label="Выйти">
+            <svg viewBox="0 0 24 24"><path d="M14 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 12h10m0 0-3-3m3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="topbar__subtitle" id="page-subtitle"></p>
+    </header>
+
+    <div class="page" id="page-profiles" data-page="profiles">
+      <section class="stats" id="stats"></section>
+      <div class="list" id="profiles-list"></div>
+    </div>
+
+    <div class="page" id="page-logs" data-page="logs" hidden>
+      <div class="toolbar">
+        <div class="chipset" id="log-filters">
+          <button class="chip chip--filter is-selected" data-log-filter="all" type="button">Все</button>
+          <button class="chip chip--filter" data-log-filter="errors" type="button">Только ошибки</button>
+        </div>
+        <button class="btn btn--text" id="logs-clear" type="button">Очистить</button>
+      </div>
+      <div class="list" id="logs-list"></div>
+      <div class="list__more">
+        <button class="btn btn--tonal" id="logs-more" type="button" hidden>Показать ещё</button>
+      </div>
+    </div>
+
+    <div class="page" id="page-settings" data-page="settings" hidden>
+      <div class="card card--form">
+        <h2 class="card__title">HWID по умолчанию</h2>
+        <p class="card__hint">Используется во всех профилях, где HWID не задан отдельно.</p>
+        <label class="field">
+          <input class="field__input" id="default-hwid" placeholder=" " spellcheck="false" autocapitalize="off">
+          <span class="field__label">HWID</span>
+        </label>
+        <p class="field__support" id="default-hwid-hint">10–64 символа: латиница, цифры, «=» и «-».</p>
+        <div class="grid grid--3">
+          <label class="field">
+            <input class="field__input" id="default-device-os" placeholder=" ">
+            <span class="field__label">ОС устройства</span>
+          </label>
+          <label class="field">
+            <input class="field__input" id="default-device-ver" placeholder=" ">
+            <span class="field__label">Версия ОС</span>
+          </label>
+          <label class="field">
+            <input class="field__input" id="default-device-model" placeholder=" ">
+            <span class="field__label">Модель</span>
+          </label>
+        </div>
+        <div class="card__actions">
+          <button class="btn btn--filled" id="settings-save" type="button">Сохранить</button>
+        </div>
+      </div>
+
+      <div class="card card--form">
+        <h2 class="card__title">Оформление</h2>
+        <div class="segmented" id="theme-segmented" role="group" aria-label="Тема оформления">
+          <button class="segmented__item" data-theme="light" type="button">Светлая</button>
+          <button class="segmented__item" data-theme="auto" type="button">Системная</button>
+          <button class="segmented__item" data-theme="dark" type="button">Тёмная</button>
+        </div>
+      </div>
+
+      <div class="card card--form">
+        <h2 class="card__title">Сессия</h2>
+        <div class="card__actions">
+          <button class="btn btn--outlined btn--danger" id="settings-logout" type="button">Выйти</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <button class="fab" id="fab-add" type="button" aria-label="Добавить профиль">
+    <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    <span class="fab__label">Профиль</span>
+  </button>
+
+  <nav class="navbar" aria-label="Разделы">
+    <button class="navbar__item" data-route="profiles" type="button">
+      <span class="navbar__pill"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></span>
+      <span class="navbar__label">Профили</span>
+    </button>
+    <button class="navbar__item" data-route="logs" type="button">
+      <span class="navbar__pill"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+      <span class="navbar__label">Логи</span>
+    </button>
+    <button class="navbar__item" data-route="settings" type="button">
+      <span class="navbar__pill"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6M17.9 17.9l-1.6-1.6M7.7 7.7 6.1 6.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+      <span class="navbar__label">Настройки</span>
+    </button>
+  </nav>
+</div>
+
+<!-- ────────────────────────────── overlays ────────────────────────────── -->
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <div class="sheet__handle" id="sheet-handle"><span></span></div>
+  <header class="sheet__header">
+    <h2 class="sheet__title" id="sheet-title"></h2>
+    <button class="icon-btn" id="sheet-close" type="button" aria-label="Закрыть">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </header>
+  <div class="sheet__body" id="sheet-body"></div>
+  <footer class="sheet__footer" id="sheet-footer"></footer>
+</div>
+
+<div class="snackbar" id="snackbar" role="status" aria-live="polite" hidden></div>
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>
