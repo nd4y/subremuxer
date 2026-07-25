@@ -19,23 +19,34 @@ OUTPUT_FORMATS = ("auto", "base64", "plain")
 
 TOKEN_BYTES = 16
 
-#: Which client the panel should think it is talking to. The panel picks the
-#: subscription format from the User-Agent, so this both decides the format and —
-#: the actual point of this app — lets a client with no HWID support hide behind
-#: one that has it.
-CLIENT_PRESETS: list[dict[str, str]] = [
+#: Overriding the User-Agent does exactly one thing: it decides which format the
+#: panel answers with. It is NOT how HWID mimicry works — the panel counts devices
+#: by the `x-hwid` header, which we send regardless. Faking the User-Agent when it
+#: is not needed actively breaks clients: a panel told "this is Happ" answers with
+#: an Xray-JSON array, and a client that only reads base64 imports zero servers.
+CLIENT_PRESETS: list[dict[str, object]] = [
+    {
+        "id": "passthrough",
+        "label": "Как у клиента (рекомендуется)",
+        "user_agent": "",
+        "family": "панель выберет под настоящий клиент",
+        "forces_format": False,
+        "hint": "HWID и данные устройства подменяются всё равно — для них User-Agent не нужен",
+    },
     {
         "id": "happ",
         "label": "Happ",
         "user_agent": "Happ/2.16.0",
         "family": "Xray JSON",
-        "hint": "Задал стандарт HWID-заголовков — самый безопасный выбор для мимикрии",
+        "forces_format": True,
+        "hint": "Задал стандарт HWID-заголовков",
     },
     {
         "id": "v2raytun",
         "label": "v2RayTun",
         "user_agent": "v2RayTun/3.9.0",
         "family": "Xray JSON",
+        "forces_format": True,
         "hint": "Поддерживает HWID, широко распространён",
     },
     {
@@ -43,6 +54,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Streisand",
         "user_agent": "Streisand/1.6.60",
         "family": "Xray JSON",
+        "forces_format": True,
         "hint": "iOS-клиент на ядре Xray",
     },
     {
@@ -50,6 +62,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "sing-box (SFA / SFI / SFM)",
         "user_agent": "SFA/1.11.0 sing-box/1.11.0",
         "family": "Sing-box JSON",
+        "forces_format": True,
         "hint": "Официальные клиенты sing-box",
     },
     {
@@ -57,6 +70,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Karing",
         "user_agent": "Karing/1.1.4.600",
         "family": "Sing-box JSON",
+        "forces_format": True,
         "hint": "HWID по умолчанию выключен в самом клиенте",
     },
     {
@@ -64,6 +78,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Hiddify",
         "user_agent": "HiddifyNext/2.5.7 sing-box",
         "family": "Sing-box JSON",
+        "forces_format": True,
         "hint": "Кроссплатформенный клиент на ядре sing-box",
     },
     {
@@ -71,6 +86,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Clash Verge / Mihomo",
         "user_agent": "clash-verge/v2.0.3 mihomo",
         "family": "Clash / Mihomo YAML",
+        "forces_format": True,
         "hint": "Десктопный Clash-клиент",
     },
     {
@@ -78,6 +94,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "FlClash",
         "user_agent": "FlClash/0.8.80 clash-meta",
         "family": "Clash / Mihomo YAML",
+        "forces_format": True,
         "hint": "Мобильный Clash-клиент",
     },
     {
@@ -85,6 +102,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Stash",
         "user_agent": "Stash/3.1.0 Clash",
         "family": "Clash / Mihomo YAML",
+        "forces_format": True,
         "hint": "iOS-клиент на ядре Clash",
     },
     {
@@ -92,6 +110,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Shadowrocket",
         "user_agent": "Shadowrocket/2.2.45",
         "family": "Base64",
+        "forces_format": True,
         "hint": "HWID по умолчанию выключен в самом клиенте",
     },
     {
@@ -99,6 +118,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "v2rayN",
         "user_agent": "v2rayN/7.12.4",
         "family": "Base64",
+        "forces_format": True,
         "hint": "Десктопный клиент для Windows",
     },
     {
@@ -106,6 +126,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "v2rayNG",
         "user_agent": "v2rayNG/1.9.30",
         "family": "Base64",
+        "forces_format": True,
         "hint": "Android-клиент",
     },
     {
@@ -113,6 +134,7 @@ CLIENT_PRESETS: list[dict[str, str]] = [
         "label": "Throne",
         "user_agent": "Throne/1.0.4",
         "family": "Sing-box JSON",
+        "forces_format": True,
         "hint": "Продолжение NekoBox",
     },
     {
@@ -123,14 +145,8 @@ CLIENT_PRESETS: list[dict[str, str]] = [
             "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
         ),
         "family": "HTML-страница",
+        "forces_format": True,
         "hint": "Панель отдаст человекочитаемую страницу, а не подписку",
-    },
-    {
-        "id": "passthrough",
-        "label": "Как у клиента (без мимикрии)",
-        "user_agent": "",
-        "family": "На усмотрение клиента",
-        "hint": "Панель увидит настоящий клиент — HWID придётся поддерживать ему самому",
     },
 ]
 
@@ -179,14 +195,15 @@ DEVICE_PRESETS: list[dict[str, str]] = [
     {"id": "none", "label": "Не отправлять данные устройства", "os": "", "ver": "", "model": ""},
 ]
 
-#: What a brand-new profile looks like. Mimicry is on by default: the whole point
-#: of this app is attaching a client that cannot send an HWID itself, so out of
-#: the box we present ourselves to the panel as Happ on a Pixel 9.
-DEFAULT_CLIENT_PRESET = "happ"
+#: What a brand-new profile looks like. Mimicry is on by default — that is the
+#: point of this app — but it is *device* mimicry: the panel is told it is talking
+#: to a Pixel 9 with our HWID, while the client's own User-Agent goes through
+#: untouched so the panel still answers in a format that client can actually read.
+DEFAULT_CLIENT_PRESET = "passthrough"
 DEFAULT_DEVICE_PRESET = "pixel9"
 
 
-def _preset(presets: list[dict[str, str]], preset_id: str) -> dict[str, str]:
+def _preset(presets: list[dict[str, Any]], preset_id: str) -> dict[str, Any]:
     return next(item for item in presets if item["id"] == preset_id)
 
 
@@ -195,12 +212,12 @@ def default_profile_fields() -> dict[str, Any]:
     device = _preset(DEVICE_PRESETS, DEFAULT_DEVICE_PRESET)
     return {
         "hwid_mode": "override",
-        "upstream_ua": client["user_agent"],
-        "client_preset": client["id"],
-        "device_preset": device["id"],
-        "device_os": device["os"],
-        "device_ver": device["ver"],
-        "device_model": device["model"],
+        "upstream_ua": str(client["user_agent"]),
+        "client_preset": str(client["id"]),
+        "device_preset": str(device["id"]),
+        "device_os": str(device["os"]),
+        "device_ver": str(device["ver"]),
+        "device_model": str(device["model"]),
     }
 
 

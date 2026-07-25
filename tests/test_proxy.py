@@ -179,6 +179,60 @@ def test_user_agent_override_forces_a_format_family(make_client):
     assert handler.seen[-1].headers["user-agent"] == "clash-verge/v2.0.0 mihomo"
 
 
+def negotiating_upstream():
+    """A panel that picks the response format from the User-Agent — as real ones do."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        ua = request.headers.get("user-agent", "").lower()
+        if "happ" in ua:
+            return httpx.Response(
+                200, text=fixtures.XRAY_CONFIG_LIST, headers={"content-type": "application/json"}
+            )
+        if "clash" in ua or "mihomo" in ua:
+            return httpx.Response(200, text=fixtures.CLASH, headers={"content-type": "text/yaml"})
+        return httpx.Response(200, text=fixtures.BASE64_LIST)
+
+    handler.seen = seen  # type: ignore[attr-defined]
+    return handler
+
+
+def test_by_default_each_client_gets_the_format_it_can_read(make_client):
+    """The NekoBox regression: forcing a User-Agent made the panel answer with an
+    Xray-JSON array to a client that only parses base64, so it imported nothing.
+    Passing the client's own User-Agent through is what prevents that — and HWID
+    substitution does not depend on the User-Agent at all."""
+    handler = negotiating_upstream()
+    client = make_client(handler)
+    profile = make_profile(client, upstream_ua=None, filter={"mode": "builder", "conditions": []})
+
+    nekobox = client.get(f"/s/{profile['token']}", headers={"user-agent": "NekoBox/1.3.8"})
+    assert base64.b64decode(nekobox.text).decode().startswith("vless://")
+    assert handler.seen[-1].headers["user-agent"] == "NekoBox/1.3.8"
+    # The whole point of the app still happens.
+    assert handler.seen[-1].headers["x-hwid"] == CONFIGURED_HWID
+
+    happ = client.get(f"/s/{profile['token']}", headers={"user-agent": "Happ/2.16.0"})
+    assert json.loads(happ.text)[0]["remarks"]
+
+    clash = client.get(f"/s/{profile['token']}", headers={"user-agent": "clash-verge/v2.0.3 mihomo"})
+    assert yaml.safe_load(clash.text)["proxies"]
+
+
+def test_forcing_a_user_agent_hands_every_client_the_same_format(make_client):
+    """Documented trade-off, not a bug: this is what the override is for, and why
+    the admin UI warns about it."""
+    handler = negotiating_upstream()
+    client = make_client(handler)
+    profile = make_profile(
+        client, upstream_ua="Happ/2.16.0", filter={"mode": "builder", "conditions": []}
+    )
+
+    body = client.get(f"/s/{profile['token']}", headers={"user-agent": "NekoBox/1.3.8"}).text
+    assert json.loads(body)[0]["remarks"], "NekoBox asked, but the panel answered as if to Happ"
+
+
 # ------------------------------------------------------------------ passthrough
 
 

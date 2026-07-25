@@ -1274,6 +1274,21 @@ svg {
   color: var(--on-surface-variant);
 }
 
+.section__warning {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--shape-m);
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.section__warning:empty,
+.section__warning[hidden] {
+  display: none;
+}
+
 /* -------------------------------------------------------- regexp builder */
 
 .conditions {

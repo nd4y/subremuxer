@@ -38,7 +38,7 @@ class TemplateError(ValueError):
 
 
 def _client(preset_id: str) -> str:
-    return next(item["user_agent"] for item in CLIENT_PRESETS if item["id"] == preset_id)
+    return str(next(item["user_agent"] for item in CLIENT_PRESETS if item["id"] == preset_id))
 
 
 def _device(preset_id: str) -> dict[str, str]:
@@ -82,39 +82,40 @@ def _payload(
 BUILTIN_TEMPLATES: list[dict[str, Any]] = [
     {
         "builtin_id": "happ_pixel9",
-        "name": "Мимикрия под Happ (Pixel 9)",
+        "name": "Мимикрия устройства (Pixel 9)",
         "description": (
-            "Основной сценарий: клиент без поддержки HWID прячется за Happ на Pixel 9. "
-            "Ничего не фильтруется — только подмена личности."
+            "Основной сценарий: клиент без поддержки HWID прячется за Pixel 9 с нашим "
+            "HWID. User-Agent клиента идёт наверх как есть, поэтому панель отвечает "
+            "форматом, который этот клиент умеет читать."
         ),
         "sort_order": 10,
-        "payload": _payload(client="happ", device="pixel9"),
+        "payload": _payload(client="passthrough", device="pixel9"),
     },
     {
         "builtin_id": "happ_iphone",
-        "name": "Мимикрия под Happ (iPhone 16 Pro)",
+        "name": "Мимикрия устройства (iPhone 16 Pro)",
         "description": "То же самое, но панель видит iOS-устройство.",
         "sort_order": 20,
-        "payload": _payload(client="happ", device="iphone16pro"),
+        "payload": _payload(client="passthrough", device="iphone16pro"),
     },
     {
         "builtin_id": "happ_no_ru",
-        "name": "Happ + только зарубежные",
-        "description": "Мимикрия под Happ на Pixel 9 и отсев всего, что содержит RU в названии.",
+        "name": "Pixel 9 + только зарубежные",
+        "description": "Мимикрия устройства и отсев всего, что содержит RU в названии.",
         "sort_order": 30,
         "payload": _payload(
-            client="happ",
+            client="passthrough",
             device="pixel9",
             conditions=[{"op": "not_contains", "value": "RU"}],
         ),
     },
     {
         "builtin_id": "happ_lte_no_ru",
-        "name": "Happ + мобильные каналы",
-        "description": "Мимикрия под Happ и фильтр «содержит LTE и не содержит RU».",
+        "name": "Pixel 9 + мобильные каналы",
+        "description": "Мимикрия устройства и фильтр «содержит LTE и не содержит RU».",
         "sort_order": 40,
         "payload": _payload(
-            client="happ",
+            client="passthrough",
             device="pixel9",
             conditions=[
                 {"op": "contains", "value": "LTE"},
@@ -123,30 +124,38 @@ BUILTIN_TEMPLATES: list[dict[str, Any]] = [
         ),
     },
     {
-        "builtin_id": "singbox_pixel9",
-        "name": "Заставить панель отдать sing-box",
+        "builtin_id": "happ_forced",
+        "name": "Заставить панель отдать Xray JSON (Happ)",
         "description": (
-            "Панель выбирает формат по User-Agent — этот шаблон всегда получает "
-            "sing-box JSON, каким бы ни был настоящий клиент."
+            "Панель выбирает формат по User-Agent. Этот шаблон представляется Happ, "
+            "поэтому всегда получает Xray JSON — берите его, только если ваш клиент "
+            "этот формат читает."
         ),
         "sort_order": 50,
+        "payload": _payload(client="happ", device="pixel9"),
+    },
+    {
+        "builtin_id": "singbox_pixel9",
+        "name": "Заставить панель отдать sing-box",
+        "description": "То же для sing-box JSON, каким бы ни был настоящий клиент.",
+        "sort_order": 60,
         "payload": _payload(client="singbox", device="pixel9"),
     },
     {
         "builtin_id": "mihomo_desktop",
         "name": "Заставить панель отдать Clash / Mihomo",
         "description": "То же для YAML-формата: панель видит Clash Verge на ПК с Windows 11.",
-        "sort_order": 60,
+        "sort_order": 70,
         "payload": _payload(client="mihomo", device="windows11"),
     },
     {
         "builtin_id": "passthrough",
-        "name": "Без мимикрии",
+        "name": "Без мимикрии вообще",
         "description": (
-            "Чистое проксирование: заголовки клиента уходят наверх как есть, "
-            "фильтра нет. Удобно как отправная точка."
+            "Чистое проксирование: HWID клиента не трогается, заголовки уходят наверх "
+            "как есть, фильтра нет. Удобно как отправная точка."
         ),
-        "sort_order": 70,
+        "sort_order": 80,
         "payload": _payload(client="passthrough", device="none", hwid_mode="passthrough"),
     },
 ]

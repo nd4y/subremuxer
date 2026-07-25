@@ -467,11 +467,12 @@ function buildConfigForm(draft, { idPrefix = "cfg" } = {}) {
   const matchedClient = meta.client_presets.find((preset) => preset.user_agent === draft.upstream_ua);
   const clientSelect = selectField({
     id: id("client"),
-    label: "Каким клиентом представляться",
+    label: "Каким клиентом представляться панели",
     value: matchedClient ? matchedClient.id : "custom",
     options: clientOptions,
   });
   const clientHint = h("p", { class: "section__hint" });
+  const clientWarning = h("p", { class: "section__warning" });
   const uaField = field({ id: id("ua"), label: "User-Agent", value: draft.upstream_ua });
   const uaInput = $("input", uaField);
 
@@ -481,15 +482,25 @@ function buildConfigForm(draft, { idPrefix = "cfg" } = {}) {
       draft.upstream_ua = preset.user_agent;
       uaInput.value = preset.user_agent;
       uaField.hidden = true;
-      clientHint.textContent = `${preset.hint}. Панель ответит форматом: ${preset.family}.`;
+      clientHint.textContent = `${preset.hint}. Формат ответа: ${preset.family}.`;
     } else {
       uaField.hidden = false;
       clientHint.textContent = "Панель увидит ровно эту строку User-Agent.";
     }
+    // The single most common way to break a working profile: force a format the
+    // real client cannot parse, and watch it import zero servers.
+    const forces = preset ? preset.forces_format : Boolean(uaInput.value.trim());
+    clientWarning.hidden = !forces;
+    clientWarning.textContent = forces
+      ? "Панель выбирает формат подписки по User-Agent. С этой подменой она будет " +
+        "отвечать одним и тем же форматом всем клиентам — убедитесь, что ваш клиент " +
+        "его читает, иначе он импортирует ноль серверов."
+      : "";
   }
   $("select", clientSelect).addEventListener("change", (event) => refreshClient(event.target.value));
   uaInput.addEventListener("input", (event) => {
     draft.upstream_ua = event.target.value;
+    clientWarning.hidden = !event.target.value.trim();
   });
   refreshClient(matchedClient ? matchedClient.id : "custom");
 
@@ -816,26 +827,32 @@ function buildConfigForm(draft, { idPrefix = "cfg" } = {}) {
 
   const sections = [
     section(
-      "Мимикрия",
-      "Панель выбирает формат подписки и считает устройства по этим заголовкам. Здесь решается, кем мы для неё выглядим.",
-      clientSelect,
-      clientHint,
-      uaField,
+      "Устройство (мимикрия)",
+      "Панель считает устройства по заголовку x-hwid и подписывает их этими данными. Формата ответа они не меняют — подставлять их безопасно всегда.",
       deviceSelect,
       h("div", { class: "grid grid--3" }, osField, verField, modelField)
     ),
     section(
       "HWID",
-      "Панель считает устройства по заголовку x-hwid. Здесь решается, что мы ей отправим.",
+      "Здесь решается, что отправить в x-hwid.",
       hwidMode,
       hwidModeHint,
       captureSelect,
       hwidField,
       hwidHint
     ),
+    section(
+      "Формат подписки",
+      "Панель выбирает формат по User-Agent. По умолчанию мы прокидываем настоящий — тогда каждый клиент получает то, что умеет читать.",
+      clientSelect,
+      clientHint,
+      clientWarning,
+      uaField,
+      outputToggle
+    ),
     section("Фильтр по имени сервера", null, filterModeToggle, builderBox, rawBox),
     section("Протоколы", "Ничего не выбрано — проходят все протоколы.", protocolChips),
-    section("Дополнительно", null, outputToggle, cacheField),
+    section("Дополнительно", null, cacheField),
   ];
 
   function collect() {
@@ -916,17 +933,18 @@ const HWID_MODE_LABELS = {
   passthrough: "HWID клиента",
 };
 
-function clientLabel(userAgent) {
+/** Only a real override is worth showing — it is the setting that changes format. */
+function forcedFormatLabel(userAgent) {
   if (!userAgent) return null;
   const preset = state.meta?.client_presets.find((item) => item.user_agent === userAgent);
-  return preset && preset.id !== "passthrough" ? preset.label : "свой UA";
+  return preset ? `формат: ${preset.family}` : "свой User-Agent";
 }
 
 function profileCard(profile) {
   const badges = [h("span", { class: "badge badge--primary", text: HWID_MODE_LABELS[profile.hwid_mode] })];
 
-  const client = clientLabel(profile.upstream_ua);
-  if (client) badges.push(h("span", { class: "badge badge--tertiary", text: `под ${client}` }));
+  const forced = forcedFormatLabel(profile.upstream_ua);
+  if (forced) badges.push(h("span", { class: "badge badge--tertiary", text: forced }));
   if (profile.device_model) badges.push(h("span", { class: "badge", text: profile.device_model }));
 
   const conditions = profile.filter?.conditions?.length || 0;
@@ -1858,8 +1876,8 @@ async function showNewProfileChooser() {
 function templateBadges(template) {
   const payload = template.payload || {};
   const badges = [];
-  const client = clientLabel(payload.upstream_ua);
-  badges.push(h("span", { class: "badge badge--tertiary", text: client ? `под ${client}` : "без мимикрии" }));
+  const forced = forcedFormatLabel(payload.upstream_ua);
+  if (forced) badges.push(h("span", { class: "badge badge--tertiary", text: forced }));
   badges.push(h("span", { class: "badge", text: HWID_MODE_LABELS[payload.hwid_mode] || "HWID" }));
   const conditions = payload.filter?.conditions?.length || 0;
   if (conditions) badges.push(h("span", { class: "badge", text: `${conditions} усл.` }));

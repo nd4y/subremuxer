@@ -21,8 +21,10 @@ def test_meta_exposes_client_and_device_presets(admin):
     assert {"happ", "v2raytun", "singbox", "mihomo", "shadowrocket", "passthrough"} <= client_ids
     device_ids = {preset["id"] for preset in meta["device_presets"]}
     assert {"pixel9", "iphone16pro", "none"} <= device_ids
-    assert meta["default_client_preset"] == "happ"
+    assert meta["default_client_preset"] == "passthrough"
     assert meta["default_device_preset"] == "pixel9"
+    # The recommended option has to come first in the list the UI renders.
+    assert meta["client_presets"][0]["id"] == "passthrough"
 
 
 def test_every_client_preset_has_a_user_agent_except_passthrough():
@@ -32,12 +34,21 @@ def test_every_client_preset_has_a_user_agent_except_passthrough():
             assert preset["user_agent"], preset["id"]
 
 
-def test_defaults_mimic_happ_on_a_pixel_9():
+def test_forcing_the_format_is_exactly_the_presets_that_override_the_user_agent():
+    for preset in CLIENT_PRESETS:
+        assert preset["forces_format"] is bool(preset["user_agent"]), preset["id"]
+
+
+def test_defaults_mimic_a_pixel_9_without_touching_the_user_agent():
+    """The bug this guards: forcing a User-Agent changes the format the panel
+    answers with, which broke a NekoBox client that only reads base64. Device
+    mimicry and HWID need no User-Agent override at all."""
     defaults = default_profile_fields()
     assert defaults["hwid_mode"] == "override"
-    assert "Happ" in defaults["upstream_ua"]
     assert defaults["device_os"] == "Android"
     assert defaults["device_model"] == "Pixel 9"
+    assert defaults["upstream_ua"] == ""
+    assert defaults["client_preset"] == "passthrough"
 
 
 def test_the_none_device_preset_clears_every_field():
@@ -54,13 +65,25 @@ def test_builtins_are_seeded_on_first_start(admin):
     assert builtin_ids == {template["builtin_id"] for template in BUILTIN_TEMPLATES}
 
 
-def test_the_default_builtin_is_happ_on_a_pixel_9(admin):
+def test_the_default_builtin_mimics_a_device_without_forcing_a_format(admin):
     templates = admin.get("/api/templates").json()
     template = next(item for item in templates if item["builtin_id"] == "happ_pixel9")
-    assert "Happ" in template["payload"]["upstream_ua"]
     assert template["payload"]["device_model"] == "Pixel 9"
     assert template["payload"]["hwid_mode"] == "override"
+    assert template["payload"]["upstream_ua"] == ""
     assert template["payload"]["filter"]["conditions"] == []
+
+
+def test_only_the_explicitly_named_builtins_force_a_format(admin):
+    forcing = {
+        item["builtin_id"]
+        for item in admin.get("/api/templates").json()
+        if item["payload"].get("upstream_ua")
+    }
+    assert forcing == {"happ_forced", "singbox_pixel9", "mihomo_desktop"}
+    for template in admin.get("/api/templates").json():
+        if template["builtin_id"] in forcing:
+            assert "Заставить панель" in template["name"]
 
 
 def test_builtins_are_ordered_and_described(admin):
@@ -174,7 +197,7 @@ def test_creating_a_profile_from_a_template(admin):
     template = next(
         item
         for item in admin.get("/api/templates").json()
-        if item["builtin_id"] == "happ_lte_no_ru"
+        if item["builtin_id"] == "happ_forced"
     )
     created = admin.post(
         "/api/profiles",
@@ -190,7 +213,6 @@ def test_creating_a_profile_from_a_template(admin):
     assert profile["upstream_url"] == "https://panel.example.org/sub/abc"
     assert profile["device_model"] == "Pixel 9"
     assert "Happ" in profile["upstream_ua"]
-    assert [c["value"] for c in profile["filter"]["conditions"]] == ["LTE", "RU"]
 
 
 def test_values_sent_alongside_a_template_win(admin):
