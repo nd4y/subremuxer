@@ -271,6 +271,12 @@ ADMIN_PASSWORD=dev uvicorn app.main:app --reload
 3. Добавьте в **Client scopes → \<клиент\>-dedicated** маппер типа **Group Membership**
    с Token Claim Name `groups`. Снимите **Full group path**, либо оставьте — приложение
    понимает оба написания и сравнивает по последнему сегменту пути.
+
+   Маппер на выделенном скоупе клиента работает для всех токенов сам по себе, и просить
+   группы отдельным scope не нужно. Более того, вредно: client scope с именем `groups`
+   в Keycloak не встроен, и запрос несуществующего scope обрывает вход целиком с ошибкой
+   `invalid_scope` — ещё до формы ввода пароля. Поэтому `OIDC_SCOPES` по умолчанию
+   ограничен `openid profile email`.
 4. Пропишите переменные:
 
 ```bash
@@ -332,7 +338,7 @@ AUTH_DISABLE_LOGIN_FORM=true    # убрать вход по паролю сов
 | `OIDC_ADMIN_GROUP` | — | группа, дающая права администратора |
 | `OIDC_VIEWER_GROUP` | — | группа, дающая права читателя |
 | `OIDC_GROUPS_CLAIM` | `groups` | claim, в котором приезжает членство в группах |
-| `OIDC_SCOPES` | `openid profile email groups` | запрашиваемые scope |
+| `OIDC_SCOPES` | `openid profile email` | запрашиваемые scope. Группы сюда добавлять не нужно — см. ниже |
 | `OIDC_AUTO_LOGIN` | `false` | пропускать экран входа и сразу отправлять к провайдеру |
 | `OIDC_DISPLAY_NAME` | `OIDC` | подпись на кнопке входа |
 | `OIDC_REDIRECT_URL` | из `PUBLIC_BASE_URL` | адрес колбэка, если приложение не видит собственный внешний адрес |

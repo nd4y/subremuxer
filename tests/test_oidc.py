@@ -32,6 +32,24 @@ def test_the_login_redirect_carries_pkce_and_the_client_id(oidc_client, idp):
     assert query["redirect_uri"] == ["https://sub.example.org/auth/oidc/callback"]
 
 
+def test_groups_are_not_requested_as_a_scope(oidc_client, idp):
+    """Keycloak has no `groups` client scope, and asking for one it does not know
+    gets the whole login refused with `invalid_scope` — before the user ever sees
+    a password prompt. The group mapper sits on the client's dedicated scope and
+    needs no request."""
+    client = oidc_client()
+    response = client.get("/auth/oidc/login", follow_redirects=False)
+    scope = parse_qs(urlsplit(response.headers["location"]).query)["scope"][0]
+    assert scope == "openid profile email"
+
+
+def test_scopes_can_be_extended_for_realms_that_need_it(oidc_client, idp):
+    client = oidc_client(OIDC_SCOPES="openid profile email team-groups")
+    response = client.get("/auth/oidc/login", follow_redirects=False)
+    scope = parse_qs(urlsplit(response.headers["location"]).query)["scope"][0]
+    assert scope == "openid profile email team-groups"
+
+
 def test_a_full_sign_in_grants_an_admin_session(oidc_client, idp):
     client = oidc_client()
     response = sign_in(client, idp)

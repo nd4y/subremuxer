@@ -57,8 +57,13 @@ class Settings:
     oidc_issuer: str = field(default_factory=lambda: _env_str("OIDC_ISSUER").rstrip("/"))
     oidc_client_id: str = field(default_factory=lambda: _env_str("OIDC_CLIENT_ID"))
     oidc_client_secret: str = field(default_factory=lambda: _env_str("OIDC_CLIENT_SECRET"))
+    #: Groups are deliberately absent here. A group mapper lives on the client's
+    #: own dedicated scope and applies to every token without being asked for,
+    #: while `groups` is not a client scope Keycloak ships — requesting it gets
+    #: the whole login refused with `invalid_scope`. Realms that expose groups
+    #: through a separate optional scope can add its name here.
     oidc_scopes: str = field(
-        default_factory=lambda: _env_str("OIDC_SCOPES", "openid profile email groups")
+        default_factory=lambda: _env_str("OIDC_SCOPES", "openid profile email")
     )
     #: Claim carrying group membership. Keycloak group mappers usually write
     #: `groups`; some realms use `roles` instead.
