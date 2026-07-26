@@ -95,6 +95,10 @@ class Settings:
         default_factory=lambda: _env_bool("UPSTREAM_VERIFY_TLS", True)
     )
 
+    #: Verbosity of the application's own log. INFO carries the startup checks —
+    #: the identity provider answering, templates being seeded.
+    log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO").upper())
+
     # Log retention
     log_retention_days: int = field(default_factory=lambda: _env_int("LOG_RETENTION_DAYS", 30))
     log_max_rows: int = field(default_factory=lambda: _env_int("LOG_MAX_ROWS", 20000))

@@ -57,6 +57,23 @@ def _ensure_writable(directory: Path) -> None:
         ) from exc
 
 
+def _configure_logging(settings: Settings) -> None:
+    """Give the application's own logger a handler.
+
+    uvicorn configures only its own loggers, so without this everything below
+    WARNING is dropped by the root logger's fallback — including the startup
+    line saying the identity provider answered, which is precisely what one
+    goes to `docker logs` to read.
+    """
+    if logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)-8s %(name)s: %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(getattr(logging, settings.log_level, logging.INFO))
+    logger.propagate = False
+
+
 async def _check_oidc(provider: OIDCProvider, settings: Settings) -> None:
     """Read the provider's discovery document once, and say so out loud.
 
@@ -114,6 +131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings = settings
+        _configure_logging(settings)
         _ensure_writable(settings.data_dir)
         app.state.db = Database(settings.db_path)
         app.state.fetcher = UpstreamFetcher(settings)

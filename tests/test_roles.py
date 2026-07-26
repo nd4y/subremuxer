@@ -210,6 +210,27 @@ def test_a_provider_without_groups_configured_is_flagged(monkeypatch, tmp_path):
     reset_settings()
 
 
+def test_the_startup_check_reaches_the_log(oidc_client, capsys):
+    """The provider check is only useful if `docker logs` actually shows it.
+
+    Read from the stream rather than through caplog: the logger deliberately
+    does not propagate to the root, so caplog would see nothing and the test
+    would pass or fail depending on what ran before it.
+    """
+    import logging
+
+    from app.main import logger
+
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+
+    oidc_client()
+
+    assert "OIDC" in capsys.readouterr().err
+    assert logger.handlers, "у логгера приложения нет обработчика — INFO никуда не попадёт"
+    assert logger.level <= logging.INFO
+
+
 # --------------------------------------------------------------- migration
 
 
