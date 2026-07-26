@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -30,13 +30,27 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-    token      TEXT PRIMARY KEY,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    user_agent TEXT,
-    ip         TEXT
+    token        TEXT PRIMARY KEY,
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    user_agent   TEXT,
+    ip           TEXT,
+    role         TEXT NOT NULL DEFAULT 'admin',
+    method       TEXT NOT NULL DEFAULT 'password',
+    subject      TEXT,
+    display_name TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+-- A login that has been started but not yet come back from the provider.
+CREATE TABLE IF NOT EXISTS oidc_logins (
+    state         TEXT PRIMARY KEY,
+    nonce         TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    redirect_uri  TEXT NOT NULL,
+    next_url      TEXT NOT NULL DEFAULT '/',
+    expires_at    INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS profiles (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,7 +142,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_builtin ON profile_templates(bui
 
 #: Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
 #: EXISTS", so upgrades are applied by inspecting the table.
-_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("profiles", "deleted_at", "INTEGER"),)
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("profiles", "deleted_at", "INTEGER"),
+    # Sessions predate roles: anything already signed in keeps full access,
+    # which is right — before this release the only way in was the master
+    # password, and that is an administrator.
+    ("sessions", "role", "TEXT NOT NULL DEFAULT 'admin'"),
+    ("sessions", "method", "TEXT NOT NULL DEFAULT 'password'"),
+    ("sessions", "subject", "TEXT"),
+    ("sessions", "display_name", "TEXT"),
+)
 
 
 class Database:
@@ -215,27 +238,75 @@ class Database:
 
     # -------------------------------------------------------------- sessions
 
-    def create_session(self, token: str, ttl_seconds: int, ip: str | None, ua: str | None) -> None:
+    def create_session(
+        self,
+        token: str,
+        ttl_seconds: int,
+        ip: str | None,
+        ua: str | None,
+        *,
+        role: str = "admin",
+        method: str = "password",
+        subject: str | None = None,
+        display_name: str | None = None,
+    ) -> None:
         now = int(time.time())
         self.execute(
-            "INSERT INTO sessions(token, created_at, expires_at, user_agent, ip) VALUES(?,?,?,?,?)",
-            (token, now, now + ttl_seconds, ua, ip),
+            "INSERT INTO sessions(token, created_at, expires_at, user_agent, ip, "
+            "role, method, subject, display_name) VALUES(?,?,?,?,?,?,?,?,?)",
+            (token, now, now + ttl_seconds, ua, ip, role, method, subject, display_name),
         )
 
-    def session_valid(self, token: str) -> bool:
-        row = self.query_one("SELECT expires_at FROM sessions WHERE token = ?", (token,))
+    def get_session(self, token: str) -> sqlite3.Row | None:
+        """The session behind a cookie, or None if it is unknown or expired."""
+        row = self.query_one("SELECT * FROM sessions WHERE token = ?", (token,))
         if row is None:
-            return False
+            return None
         if row["expires_at"] < int(time.time()):
             self.execute("DELETE FROM sessions WHERE token = ?", (token,))
-            return False
-        return True
+            return None
+        return row
+
+    def session_valid(self, token: str) -> bool:
+        return self.get_session(token) is not None
 
     def delete_session(self, token: str) -> None:
         self.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
     def purge_sessions(self) -> None:
-        self.execute("DELETE FROM sessions WHERE expires_at < ?", (int(time.time()),))
+        now = int(time.time())
+        self.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+        self.execute("DELETE FROM oidc_logins WHERE expires_at < ?", (now,))
+
+    # ---------------------------------------------------------- oidc logins
+
+    def start_oidc_login(
+        self,
+        state: str,
+        nonce: str,
+        verifier: str,
+        redirect_uri: str,
+        next_url: str,
+        ttl_seconds: int,
+    ) -> None:
+        self.execute(
+            "INSERT INTO oidc_logins(state, nonce, code_verifier, redirect_uri, next_url, "
+            "expires_at) VALUES(?,?,?,?,?,?)",
+            (state, nonce, verifier, redirect_uri, next_url, int(time.time()) + ttl_seconds),
+        )
+
+    def take_oidc_login(self, state: str) -> sqlite3.Row | None:
+        """Fetch a pending login and consume it, so a code cannot be replayed."""
+        row = self.query_one("SELECT * FROM oidc_logins WHERE state = ?", (state,))
+        if row is None:
+            return None
+        self.execute("DELETE FROM oidc_logins WHERE state = ?", (state,))
+        if row["expires_at"] < int(time.time()):
+            return None
+        return row
+
+    def purge_oidc_logins(self) -> None:
+        self.execute("DELETE FROM oidc_logins WHERE expires_at < ?", (int(time.time()),))
 
     # ------------------------------------------------------------ log pruning
 

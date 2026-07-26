@@ -11,6 +11,19 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       # Set to true once the app is served over HTTPS.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Sign-in through an identity provider. Leaving OIDC_ISSUER empty keeps the
+      # password as the only way in.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
+      OIDC_VIEWER_GROUP: ${OIDC_VIEWER_GROUP:-}
+      OIDC_DISPLAY_NAME: ${OIDC_DISPLAY_NAME:-OIDC}
+      # Skip the login screen entirely. Reach it anyway with ?disableAutoLogin=true
+      OIDC_AUTO_LOGIN: ${OIDC_AUTO_LOGIN:-false}
+      # Switches the password off, not merely out of sight. Ignored unless OIDC
+      # is configured, so it cannot leave the instance with no way in.
+      AUTH_DISABLE_LOGIN_FORM: ${AUTH_DISABLE_LOGIN_FORM:-false}
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-30}
       LOG_MAX_ROWS: ${LOG_MAX_ROWS:-20000}
       UPSTREAM_TIMEOUT: ${UPSTREAM_TIMEOUT:-20}

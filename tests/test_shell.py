@@ -61,6 +61,54 @@ def test_the_shell_loads_the_help_file_before_the_app():
     assert html.index("help.js") < html.index("app.js")
 
 
+def test_the_login_screen_offers_both_methods():
+    """Both are rendered up front and hidden by role — the alternative is
+    building the screen twice and letting the two drift."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    for element in ('id="login-oidc"', 'id="login-form"', 'id="login-divider"', 'id="login-note"'):
+        assert element in html, element
+
+
+def test_the_interface_reads_the_methods_from_the_server():
+    source = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "me.methods" in source
+    assert "/auth/oidc/login" in source
+
+
+def test_the_escape_hatch_is_spelled_the_way_grafana_spells_it():
+    """People arrive here with the habit already formed."""
+    source = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "disableAutoLogin" in source
+    from app.routers.auth import ESCAPE_HATCH
+
+    assert ESCAPE_HATCH == "disableAutoLogin=true"
+
+
+def test_signing_out_disarms_automatic_sign_in():
+    """Otherwise the redirect would hand back the session just ended."""
+    source = (STATIC / "app.js").read_text(encoding="utf-8")
+    logout = source[source.index('for (const id of ["topbar-logout"') :][:600]
+    assert "suppressAutoLogin()" in logout
+
+
+def test_a_viewer_gets_its_own_help():
+    source = read_help()
+    assert "HELP_SECTIONS_VIEWER" in source
+    viewer = source[source.index("HELP_SECTIONS_VIEWER") :]
+    ids = set(re.findall(r'id:\s*"([\w-]+)"', viewer))
+    assert {"start", "qr", "update", "privacy", "trouble"} <= ids
+
+
+def test_the_viewer_help_stays_out_of_the_admin_subject_matter():
+    """Half an explanation of a setting they cannot reach is worse than none."""
+    source = read_help()
+    viewer = source[source.index("HELP_SECTIONS_VIEWER") :]
+    for topic in ("HWID", "мимикри", "регуляр", "User-Agent", "апстрим", "журнал"):
+        assert topic not in viewer, topic
+    # And it must not embed the playground, which calls an admin-only endpoint.
+    assert "demo:" not in viewer
+
+
 def test_help_covers_every_area_of_the_app():
     source = read_help()
     ids = set(re.findall(r'id:\s*"([\w-]+)"', source))
@@ -75,6 +123,7 @@ def test_help_covers_every_area_of_the_app():
         "formats",
         "editor",
         "logs",
+        "access",
         "trouble",
     } <= ids
 

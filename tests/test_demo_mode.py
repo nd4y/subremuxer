@@ -38,11 +38,18 @@ def test_admin_endpoints_are_open(demo_client):
 
 
 def test_the_client_is_told_it_is_a_demo(demo_client):
-    assert demo_client.get("/api/auth/me").json() == {"authenticated": True, "demo": True}
+    body = demo_client.get("/api/auth/me").json()
+    assert body["authenticated"] is True
+    assert body["demo"] is True
+    # A demo visitor can change everything, so they are an admin, not a viewer.
+    assert body["role"] == "admin"
 
 
 def test_a_normal_instance_still_reports_no_demo(client):
-    assert client.get("/api/auth/me").json() == {"authenticated": False, "demo": False}
+    body = client.get("/api/auth/me").json()
+    assert body["authenticated"] is False
+    assert body["demo"] is False
+    assert body["role"] is None
 
 
 def test_a_normal_instance_is_still_closed(client):

@@ -93,6 +93,13 @@ const api = {
 const state = {
   authenticated: false,
   demo: false,
+  // Until /api/auth/me answers, assume the narrower role: a wrong guess then
+  // shows too little for a moment instead of flashing what a viewer may not see.
+  role: "viewer",
+  user: null,
+  methods: { password: true, oidc: false },
+  oidcName: "OIDC",
+  autoLogin: false,
   route: "profiles",
   meta: null,
   profiles: [],
@@ -972,7 +979,65 @@ function forcedFormatLabel(userAgent) {
   return preset ? `формат: ${preset.family}` : "свой User-Agent";
 }
 
+function isViewer() {
+  return state.role === "viewer";
+}
+
+/**
+ * What a viewer gets: the name, the link, the QR code. The server does not send
+ * the rest, so there is nothing here to hide — this only lays out the fields
+ * that actually arrived.
+ */
+function viewerProfileCard(profile) {
+  return h(
+    "article",
+    { class: `profile${profile.enabled ? "" : " is-disabled"}` },
+    h(
+      "div",
+      { class: "profile__head" },
+      h(
+        "div",
+        { class: "profile__title" },
+        h("h2", { class: "profile__name", text: profile.name }),
+        h("span", {
+          class: "profile__upstream",
+          text: profile.enabled ? "Подписка активна" : "Подписка выключена",
+        })
+      ),
+      h("button", {
+        class: "icon-btn",
+        type: "button",
+        html: icons.qr,
+        "aria-label": "Ссылка и QR-код",
+        onclick: () => showLinkSheet(profile),
+      })
+    ),
+    h(
+      "div",
+      { class: "profile__link", onclick: () => copyToClipboard(profile.subscription_url) },
+      h("span", { text: profile.subscription_url }),
+      h("button", {
+        class: "icon-btn",
+        type: "button",
+        html: icons.copy,
+        "aria-label": "Скопировать ссылку",
+      })
+    ),
+    h(
+      "div",
+      { class: "profile__actions" },
+      h("button", {
+        class: "btn btn--tonal btn--small",
+        type: "button",
+        text: "Подключить",
+        onclick: () => showLinkSheet(profile),
+      })
+    )
+  );
+}
+
 function profileCard(profile) {
+  if (isViewer()) return viewerProfileCard(profile);
   const badges = [h("span", { class: "badge badge--primary", text: HWID_MODE_LABELS[profile.hwid_mode] })];
 
   const forced = forcedFormatLabel(profile.upstream_ua);
@@ -1185,7 +1250,9 @@ function renderProfiles() {
         { class: "empty" },
         h("p", { class: "empty__title", text: "Пока нет ни одного профиля" }),
         h("p", {
-          text: "Добавьте ссылку на исходную подписку — приложение будет проксировать её, подменять HWID и отсеивать лишние серверы.",
+          text: isViewer()
+            ? "Здесь появятся подписки, которые администратор откроет для вас."
+            : "Добавьте ссылку на исходную подписку — приложение будет проксировать её, подменять HWID и отсеивать лишние серверы.",
         })
       )
     );
@@ -1200,7 +1267,11 @@ async function loadProfiles() {
   if (!state.profiles.length && !list.childElementCount) {
     list.replaceChildren(h("div", { class: "skeleton" }), h("div", { class: "skeleton" }));
   }
-  const [profiles, stats] = await Promise.all([api.get("/api/profiles"), api.get("/api/stats")]);
+  // A viewer has no access to the counters, and asking would only produce a 403.
+  const [profiles, stats] = await Promise.all([
+    api.get("/api/profiles"),
+    isViewer() ? Promise.resolve(null) : api.get("/api/stats"),
+  ]);
   state.profiles = profiles;
   renderProfiles();
   renderStats(stats);
@@ -1359,25 +1430,57 @@ function showLinkSheet(profile) {
     clientsBox.replaceChildren(clientButtons(url, os));
   });
 
+  const common = [
+    h(
+      "div",
+      { class: "qr" },
+      h(
+        "div",
+        { class: "qr__frame" },
+        h("img", { src: `/api/profiles/${profile.id}/qr.svg`, alt: "QR-код подписки" })
+      ),
+      h("div", { class: "qr__url", text: url })
+    ),
+    section(
+      "Открыть в клиенте",
+      "Система определена автоматически — при необходимости выберите другую. Ссылка сработает, если приложение установлено на этом устройстве.",
+      osToggle,
+      clientsBox
+    ),
+  ];
+
+  if (isViewer()) {
+    openSheet({
+      title: profile.name,
+      body: [
+        ...common,
+        section(
+          "Что это за ссылка",
+          "Её нужно добавить в клиент один раз. Дальше клиент обновляет список серверов сам — заново вводить ничего не потребуется.",
+          h("button", {
+            class: "btn btn--tonal btn--small",
+            type: "button",
+            text: "Скопировать ссылку",
+            onclick: () => copyToClipboard(url),
+          })
+        ),
+      ],
+      footer: [
+        h("button", {
+          class: "btn btn--filled",
+          type: "button",
+          text: "Готово",
+          onclick: () => closeSheet(),
+        }),
+      ],
+    });
+    return;
+  }
+
   openSheet({
     title: profile.name,
     body: [
-      h(
-        "div",
-        { class: "qr" },
-        h(
-          "div",
-          { class: "qr__frame" },
-          h("img", { src: `/api/profiles/${profile.id}/qr.svg`, alt: "QR-код подписки" })
-        ),
-        h("div", { class: "qr__url", text: url })
-      ),
-      section(
-        "Открыть в клиенте",
-        "Система определена автоматически — при необходимости выберите другую. Ссылка сработает, если приложение установлено на этом устройстве.",
-        osToggle,
-        clientsBox
-      ),
+      ...common,
       section(
         "Конфигурация профиля",
         "Файл содержит токен подписки и HWID — храните его как секрет.",
@@ -2647,7 +2750,9 @@ function helpBlock(block) {
 }
 
 function showHelp(sectionId = null) {
-  const sections = window.HELP_SECTIONS || [];
+  // A viewer gets its own text rather than the administrator's with parts cut
+  // out: half an explanation of a setting they cannot see is worse than none.
+  const sections = (isViewer() ? window.HELP_SECTIONS_VIEWER : window.HELP_SECTIONS) || [];
   const bodies = sections.map((section) =>
     h(
       "section",
@@ -2691,6 +2796,8 @@ function showHelp(sectionId = null) {
 
 const PAGES = {
   profiles: { title: "Профили", subtitle: "Прокси-подписки, которые отдаёт это приложение" },
+  // The same page, described for someone who only consumes what is on it.
+  profilesViewer: { title: "Подписки", subtitle: "Ссылки для ваших клиентов" },
   probe: { title: "Захват", subtitle: "Узнать HWID и данные устройства прямо из клиента" },
   logs: { title: "Логи", subtitle: "Кто, когда и что получил" },
   settings: { title: "Настройки", subtitle: "Значения по умолчанию, шаблоны и оформление" },
@@ -2698,14 +2805,18 @@ const PAGES = {
 
 async function navigate(route, { silent = false } = {}) {
   if (!PAGES[route]) route = "profiles";
+  // A viewer has exactly one page. A stale bookmark to #/logs should land them
+  // somewhere useful rather than on a 403.
+  if (isViewer()) route = "profiles";
   state.route = route;
 
   $$(".page").forEach((page) => {
     page.hidden = page.dataset.page !== route;
   });
   $$("[data-route]").forEach((item) => item.classList.toggle("is-active", item.dataset.route === route));
-  $("#page-title").textContent = PAGES[route].title;
-  $("#page-subtitle").textContent = PAGES[route].subtitle;
+  const page = PAGES[isViewer() && route === "profiles" ? "profilesViewer" : route];
+  $("#page-title").textContent = page.title;
+  $("#page-subtitle").textContent = page.subtitle;
   $("#fab-add").classList.toggle("is-hidden", route !== "profiles");
   if (!silent) location.hash = `#/${route}`;
 
@@ -2757,12 +2868,86 @@ function initPwa() {
 
 /* -------------------------------------------------------------- auth flow */
 
+/**
+ * Remembers that automatic sign-in must not fire in this tab.
+ *
+ * Set by the `?disableAutoLogin=true` escape hatch — the same spelling Grafana
+ * uses — and by signing out, which would otherwise bounce straight back to the
+ * provider and sign the same person in again.
+ */
+const NO_AUTO_LOGIN_KEY = "subremuxer.noAutoLogin";
+
+function suppressAutoLogin() {
+  try {
+    sessionStorage.setItem(NO_AUTO_LOGIN_KEY, "1");
+  } catch {
+    /* private mode: the worst case is one extra redirect */
+  }
+}
+
+function autoLoginSuppressed() {
+  const asked = new URLSearchParams(location.search).get("disableAutoLogin");
+  if (asked && asked !== "false") {
+    suppressAutoLogin();
+    return true;
+  }
+  try {
+    return sessionStorage.getItem(NO_AUTO_LOGIN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function renderLoginMethods() {
+  const { password, oidc } = state.methods;
+  $("#login-oidc").hidden = !oidc;
+  $("#login-oidc-label").textContent = `Войти через ${state.oidcName || "OIDC"}`;
+  $("#login-form").hidden = !password;
+  $("#login-divider").hidden = !(oidc && password);
+  // Whichever method is offered alone is the primary one; when both are, the
+  // provider leads and the password is the fallback it is meant to be.
+  $("#login-submit").className = oidc
+    ? "btn btn--tonal btn--full"
+    : "btn btn--filled btn--full";
+
+  const note = $("#login-note");
+  if (!password && !oidc) {
+    note.textContent =
+      "Ни один способ входа не настроен. Проверьте переменные окружения приложения.";
+    note.hidden = false;
+  } else if (!password) {
+    note.textContent = "Вход по мастер-паролю отключён администратором.";
+    note.hidden = false;
+  } else {
+    note.hidden = true;
+  }
+}
+
 function showLogin() {
   stopProbePolling();
   $("#shell").hidden = true;
   $("#login").hidden = false;
   document.body.classList.remove("is-locked");
-  setTimeout(() => $("#login-password")?.focus(), 100);
+  renderLoginMethods();
+  if (state.methods.password) setTimeout(() => $("#login-password")?.focus(), 100);
+}
+
+function applyRoleToChrome() {
+  const viewer = isViewer();
+  document.body.classList.toggle("is-viewer", viewer);
+  // Rail and bottom bar are separate elements with the same data-route values.
+  $$("[data-route]").forEach((item) => {
+    if (item.dataset.route !== "profiles") item.hidden = viewer;
+  });
+  $("#fab-add").hidden = viewer;
+  const account = $("#topbar-account");
+  if (state.user) {
+    account.textContent = state.user;
+    account.title = viewer ? "Вы вошли как читатель" : "Вы вошли как администратор";
+    account.hidden = false;
+  } else {
+    account.hidden = true;
+  }
 }
 
 async function showApp() {
@@ -2773,11 +2958,15 @@ async function showApp() {
   $("#demo-banner").hidden = !state.demo;
   $("#topbar-logout").hidden = state.demo;
   $("#settings-logout").closest(".card").hidden = state.demo;
-  state.meta = await api.get("/api/meta");
-  state.settings = await api.get("/api/settings");
-  // Templates and captures feed pickers on other pages, so fetch them up front.
-  await Promise.all([loadTemplates().catch(() => {}), loadProbe().catch(() => {})]);
-  startProbePolling();
+  applyRoleToChrome();
+
+  if (!isViewer()) {
+    state.meta = await api.get("/api/meta");
+    state.settings = await api.get("/api/settings");
+    // Templates and captures feed pickers on other pages, so fetch them up front.
+    await Promise.all([loadTemplates().catch(() => {}), loadProbe().catch(() => {})]);
+    startProbePolling();
+  }
   const route = (location.hash.replace("#/", "") || "profiles").split("?")[0];
   await navigate(route, { silent: true });
 }
@@ -2795,8 +2984,8 @@ async function boot() {
     button.disabled = true;
     try {
       await api.post("/api/auth/login", { password: $("#login-password").value });
-      state.authenticated = true;
       $("#login-password").value = "";
+      applyAuthState(await api.get("/api/auth/me"));
       await showApp();
     } catch (error) {
       errorNode.textContent = error.message;
@@ -2805,6 +2994,8 @@ async function boot() {
       button.disabled = false;
     }
   });
+
+  $("#login-oidc").addEventListener("click", () => startOidcLogin());
 
   $$("[data-route]").forEach((item) => {
     item.addEventListener("click", () => navigate(item.dataset.route));
@@ -2896,6 +3087,9 @@ async function boot() {
     $(`#${id}`).addEventListener("click", async () => {
       await api.post("/api/auth/logout").catch(() => {});
       state.authenticated = false;
+      // Without this, automatic sign-in would send the browser back to the
+      // provider and return with the very session that was just ended.
+      suppressAutoLogin();
       showLogin();
     });
   }
@@ -2924,16 +3118,34 @@ async function boot() {
 
   try {
     const me = await api.get("/api/auth/me");
-    state.demo = Boolean(me.demo);
+    applyAuthState(me);
     if (me.authenticated) {
-      state.authenticated = true;
       await showApp();
+    } else if (me.auto_login && me.methods.oidc && !autoLoginSuppressed()) {
+      // Nothing to choose between: go straight to the provider.
+      startOidcLogin();
     } else {
       showLogin();
     }
   } catch {
     showLogin();
   }
+}
+
+function applyAuthState(me) {
+  state.authenticated = Boolean(me.authenticated);
+  state.demo = Boolean(me.demo);
+  state.role = me.role || "viewer";
+  state.user = me.user || null;
+  state.methods = me.methods || { password: true, oidc: false };
+  state.oidcName = me.oidc_name || "OIDC";
+  state.autoLogin = Boolean(me.auto_login);
+}
+
+function startOidcLogin() {
+  const route = location.hash.replace("#/", "").split("?")[0];
+  const next = route ? `?next=${encodeURIComponent(`/#/${route}`)}` : "";
+  location.href = `/auth/oidc/login${next}`;
 }
 
 document.addEventListener("DOMContentLoaded", boot);

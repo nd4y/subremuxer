@@ -25,6 +25,10 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_str(name: str, default: str = "") -> str:
+    return (os.getenv(name) or default).strip()
+
+
 @dataclass(slots=True)
 class Settings:
     """Everything tunable without touching the database."""
@@ -32,12 +36,44 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))
     db_path: Path = field(init=False)
     generated_password: bool = field(default=False, init=False)
+    #: Configuration problems worth shouting about at startup. Collected rather
+    #: than logged here so that constructing Settings stays free of side effects.
+    warnings: list[str] = field(default_factory=list, init=False)
 
     admin_password: str = field(default_factory=lambda: os.getenv("ADMIN_PASSWORD", ""))
+
+    # Hides the password form and switches the endpoint off, for installations
+    # that sign in through the identity provider only. Named after Grafana's
+    # auth.disable_login_form, and refused when there is no other way in.
+    disable_login_form: bool = field(
+        default_factory=lambda: _env_bool("AUTH_DISABLE_LOGIN_FORM", False)
+    )
 
     # Skips the admin login entirely. Meant for public demo instances; anyone who
     # can reach the app can then change anything in it.
     demo_mode: bool = field(default_factory=lambda: _env_bool("DEMO_MODE", False))
+
+    # ------------------------------------------------------------------- OIDC
+    oidc_issuer: str = field(default_factory=lambda: _env_str("OIDC_ISSUER").rstrip("/"))
+    oidc_client_id: str = field(default_factory=lambda: _env_str("OIDC_CLIENT_ID"))
+    oidc_client_secret: str = field(default_factory=lambda: _env_str("OIDC_CLIENT_SECRET"))
+    oidc_scopes: str = field(
+        default_factory=lambda: _env_str("OIDC_SCOPES", "openid profile email groups")
+    )
+    #: Claim carrying group membership. Keycloak group mappers usually write
+    #: `groups`; some realms use `roles` instead.
+    oidc_groups_claim: str = field(default_factory=lambda: _env_str("OIDC_GROUPS_CLAIM", "groups"))
+    oidc_admin_group: str = field(default_factory=lambda: _env_str("OIDC_ADMIN_GROUP"))
+    oidc_viewer_group: str = field(default_factory=lambda: _env_str("OIDC_VIEWER_GROUP"))
+    #: Overrides the redirect URI. Only needed when the app cannot see its own
+    #: public address, e.g. behind a proxy that rewrites the Host header.
+    oidc_redirect_url: str = field(default_factory=lambda: _env_str("OIDC_REDIRECT_URL"))
+    #: Sends anyone who is not signed in straight to the provider, with no login
+    #: screen in between. Grafana calls this auth.oauth_auto_login.
+    oidc_auto_login: bool = field(default_factory=lambda: _env_bool("OIDC_AUTO_LOGIN", False))
+    #: Name shown on the sign-in button.
+    oidc_display_name: str = field(default_factory=lambda: _env_str("OIDC_DISPLAY_NAME", "OIDC"))
+    oidc_verify_tls: bool = field(default_factory=lambda: _env_bool("OIDC_VERIFY_TLS", True))
     session_ttl_hours: int = field(default_factory=lambda: _env_int("SESSION_TTL_HOURS", 24 * 14))
     cookie_secure: bool = field(default_factory=lambda: _env_bool("COOKIE_SECURE", False))
 
@@ -81,6 +117,48 @@ class Settings:
             # never silently wide open.
             self.admin_password = secrets.token_urlsafe(12)
             self.generated_password = True
+
+        if self.oidc_enabled and not (self.oidc_admin_group or self.oidc_viewer_group):
+            self.warnings.append(
+                "OIDC настроен, но не заданы OIDC_ADMIN_GROUP и OIDC_VIEWER_GROUP — "
+                "войти через провайдера не сможет никто, роль будет неопределённой"
+            )
+        if self.disable_login_form and not self.oidc_enabled:
+            # Honouring this would leave the instance with no way in at all.
+            self.disable_login_form = False
+            self.warnings.append(
+                "AUTH_DISABLE_LOGIN_FORM=true проигнорирован: OIDC не настроен, "
+                "и вход по паролю остался бы единственным — отключать его нечем заменить"
+            )
+        if self.oidc_auto_login and not self.oidc_enabled:
+            self.oidc_auto_login = False
+            self.warnings.append("OIDC_AUTO_LOGIN=true проигнорирован: OIDC не настроен")
+
+    # ------------------------------------------------------------- derived
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id)
+
+    @property
+    def password_login_enabled(self) -> bool:
+        """Whether the master password is accepted at all.
+
+        Kept as a property so the endpoint and the UI can never disagree about
+        it: both read this one value.
+        """
+        return not self.disable_login_form
+
+    @property
+    def oidc_group_map(self) -> dict[str, str]:
+        """Group name from the token to the role it grants."""
+        mapping: dict[str, str] = {}
+        if self.oidc_viewer_group:
+            mapping[self.oidc_viewer_group] = "viewer"
+        # Admin last: if one group is listed as both, the stronger role wins.
+        if self.oidc_admin_group:
+            mapping[self.oidc_admin_group] = "admin"
+        return mapping
 
 
 _settings: Settings | None = None

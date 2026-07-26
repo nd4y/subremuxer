@@ -21,7 +21,7 @@
 
 <!-- ─────────────────────────────── login ─────────────────────────────── -->
 <div id="login" class="login" hidden>
-  <form class="login__card" id="login-form" autocomplete="on">
+  <div class="login__card">
     <div class="login__mark" aria-hidden="true">
       <svg viewBox="0 0 48 48" width="56" height="56">
         <path d="M8 14h32M8 24h20M8 34h26" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
@@ -30,14 +30,25 @@
     </div>
     <h1 class="login__title">Sub Remuxer</h1>
     <p class="login__subtitle">Фильтрующий прокси для подписок</p>
-    <label class="field">
-      <input class="field__input" type="password" id="login-password" name="password"
-             placeholder=" " autocomplete="current-password" required>
-      <span class="field__label">Пароль администратора</span>
-    </label>
+
+    <button class="btn btn--filled btn--full" type="button" id="login-oidc" hidden>
+      <span id="login-oidc-label">Войти через OIDC</span>
+    </button>
+
+    <div class="login__divider" id="login-divider" hidden><span>или</span></div>
+
+    <form id="login-form" class="login__form" autocomplete="on">
+      <label class="field">
+        <input class="field__input" type="password" id="login-password" name="password"
+               placeholder=" " autocomplete="current-password" required>
+        <span class="field__label">Пароль администратора</span>
+      </label>
+      <button class="btn btn--filled btn--full" type="submit" id="login-submit">Войти</button>
+    </form>
+
     <p class="login__error" id="login-error" role="alert" hidden></p>
-    <button class="btn btn--filled btn--full" type="submit" id="login-submit">Войти</button>
-  </form>
+    <p class="login__note" id="login-note" hidden></p>
+  </div>
 </div>
 
 <!-- ─────────────────────────────── shell ─────────────────────────────── -->
@@ -90,6 +101,7 @@
       <div class="topbar__row">
         <h1 class="topbar__title" id="page-title">Профили</h1>
         <div class="topbar__actions">
+          <span class="topbar__account" id="topbar-account" hidden></span>
           <button class="icon-btn" id="topbar-help" type="button" aria-label="Справка" title="Справка">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.1" fill="currentColor"/></svg>
           </button>

@@ -1,8 +1,16 @@
-"""Admin REST API. Everything except /auth/login requires a session cookie."""
+"""Admin REST API. Everything except /auth/login requires a session cookie.
+
+Three routers come out of this module. `router` is open, and holds only the
+sign-in endpoints. `shared` is what a viewer may read — profiles, redacted down
+to the links they are meant to hand out. `guarded` is everything else, and is
+administrator-only by default: a new endpoint added there is closed to viewers
+unless somebody deliberately moves it.
+"""
 
 from __future__ import annotations
 
 import io
+import logging
 from typing import Any
 
 import segno
@@ -43,15 +51,21 @@ from ..profiles import (
 )
 from ..security import (
     SESSION_COOKIE,
+    Identity,
     check_password,
     client_ip,
+    current_identity,
     issue_session,
     require_admin,
+    require_session,
 )
 from ..templates import TemplateError, TemplateRepository, apply_template
 from ..upstream import HWID_MODES, hwid_is_valid
 
+logger = logging.getLogger("subremuxer.auth")
+
 router = APIRouter(prefix="/api")
+shared = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
 guarded = APIRouter(prefix="/api", dependencies=[Depends(require_admin)])
 
 
@@ -80,6 +94,11 @@ async def login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONRe
     throttle = request.app.state.throttle
     ip = client_ip(request, settings) or "unknown"
 
+    if not settings.password_login_enabled:
+        # Switched off means switched off, not merely hidden: the endpoint is a
+        # matter of public record in a public repository.
+        raise HTTPException(status_code=404, detail="Вход по паролю отключён")
+
     if throttle.blocked(ip):
         raise HTTPException(status_code=429, detail="Слишком много попыток, подождите пять минут")
 
@@ -90,6 +109,11 @@ async def login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONRe
 
     throttle.reset(ip)
     token = issue_session(request.app.state.db, settings, ip, request.headers.get("user-agent"))
+    if settings.oidc_enabled:
+        # With an identity provider configured, the master password is the way
+        # in when that provider is unavailable. Its use should be visible in the
+        # log rather than indistinguishable from an ordinary sign-in.
+        logger.warning("вход по мастер-паролю с адреса %s в обход OIDC", ip)
     response = JSONResponse({"ok": True})
     response.set_cookie(
         SESSION_COOKIE,
@@ -115,11 +139,26 @@ async def logout(request: Request) -> JSONResponse:
 
 @router.get("/auth/me")
 async def me(request: Request) -> dict[str, Any]:
-    if request.app.state.settings.demo_mode:
-        return {"authenticated": True, "demo": True}
-    token = request.cookies.get(SESSION_COOKIE)
-    authenticated = bool(token and request.app.state.db.session_valid(token))
-    return {"authenticated": authenticated, "demo": False}
+    """Who is signed in, and which sign-in methods this instance offers.
+
+    The interface reads its whole login screen from here, so that what it shows
+    and what the server accepts cannot drift apart.
+    """
+    settings = request.app.state.settings
+    identity = current_identity(request)
+    return {
+        "authenticated": identity is not None,
+        "demo": settings.demo_mode,
+        "role": identity.role if identity else None,
+        "method": identity.method if identity else None,
+        "user": (identity.display_name or None) if identity else None,
+        "methods": {
+            "password": settings.password_login_enabled,
+            "oidc": settings.oidc_enabled,
+        },
+        "oidc_name": settings.oidc_display_name,
+        "auto_login": settings.oidc_auto_login,
+    }
 
 
 # ----------------------------------------------------------------------- meta
@@ -164,13 +203,46 @@ async def put_settings(request: Request, payload: dict[str, Any] = Body(...)) ->
 # ------------------------------------------------------------------- profiles
 
 
-@guarded.get("/profiles")
-async def list_profiles(request: Request) -> list[dict[str, Any]]:
-    base = _public_base(request)
-    return [
-        {**profile.as_dict(), "subscription_url": f"{base}/s/{profile.token}"}
-        for profile in _repo(request).list()
-    ]
+#: What a viewer is allowed to learn about a profile. Everything else — the
+#: upstream URL above all, but also the HWID, the filter and the mimicry — is
+#: removed on the server, so it never reaches the browser to be un-hidden.
+VIEWER_PROFILE_FIELDS = ("id", "name", "enabled", "subscription_url", "updated_at")
+
+
+def _profile_view(profile: Profile, request: Request, identity: Identity) -> dict[str, Any]:
+    data = {
+        **profile.as_dict(),
+        "subscription_url": f"{_public_base(request)}/s/{profile.token}",
+    }
+    if identity.is_admin:
+        return data
+    return {key: data[key] for key in VIEWER_PROFILE_FIELDS if key in data}
+
+
+@shared.get("/profiles")
+async def list_profiles(
+    request: Request, identity: Identity = Depends(require_session)
+) -> list[dict[str, Any]]:
+    return [_profile_view(profile, request, identity) for profile in _repo(request).list()]
+
+
+@shared.get("/profiles/{profile_id}")
+async def get_profile(
+    request: Request, profile_id: int, identity: Identity = Depends(require_session)
+) -> dict[str, Any]:
+    profile = _repo(request).get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    return _profile_view(profile, request, identity)
+
+
+@shared.get("/profiles/{profile_id}/qr.svg")
+async def profile_qr(request: Request, profile_id: int) -> Response:
+    profile = _repo(request).get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    url = f"{_public_base(request)}/s/{profile.token}"
+    return Response(content=qr_svg(url), media_type="image/svg+xml")
 
 
 @guarded.post("/profiles", status_code=201)
@@ -208,14 +280,6 @@ async def restore_profile(request: Request, profile_id: int) -> dict[str, Any]:
     return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
 
 
-@guarded.get("/profiles/{profile_id}")
-async def get_profile(request: Request, profile_id: int) -> dict[str, Any]:
-    profile = _repo(request).get(profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Профиль не найден")
-    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
-
-
 @guarded.put("/profiles/{profile_id}")
 async def update_profile(
     request: Request, profile_id: int, payload: dict[str, Any] = Body(...)
@@ -244,15 +308,6 @@ async def rotate_token(request: Request, profile_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     request.app.state.cache.invalidate_profile(profile_id)
     return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
-
-
-@guarded.get("/profiles/{profile_id}/qr.svg")
-async def profile_qr(request: Request, profile_id: int) -> Response:
-    profile = _repo(request).get(profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Профиль не найден")
-    url = f"{_public_base(request)}/s/{profile.token}"
-    return Response(content=qr_svg(url), media_type="image/svg+xml")
 
 
 def qr_svg(data: str) -> str:

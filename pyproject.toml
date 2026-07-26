@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.9",
     "PyYAML>=6.0",
     "segno>=1.6",
+    "PyJWT[crypto]>=2.9",
 ]
 
 [project.optional-dependencies]

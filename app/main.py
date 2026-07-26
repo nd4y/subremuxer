@@ -18,9 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from . import APP_NAME
 from .config import Settings, get_settings
 from .db import Database
+from .oidc import OIDCError, OIDCProvider
 from .pipeline import UpstreamCache
 from .profiles import ProfileRepository
-from .routers import admin, probe, subscription
+from .routers import admin, auth, probe, subscription
 from .security import LoginThrottle
 from .templates import TemplateRepository
 from .upstream import UpstreamFetcher
@@ -56,6 +57,42 @@ def _ensure_writable(directory: Path) -> None:
         ) from exc
 
 
+async def _check_oidc(provider: OIDCProvider, settings: Settings) -> None:
+    """Read the provider's discovery document once, and say so out loud.
+
+    A realm URL with a typo in it otherwise stays invisible until somebody tries
+    to sign in — which, with automatic sign-in on, is the moment the app becomes
+    unusable rather than the moment a log line would have been read.
+    """
+    try:
+        issuer = await provider.self_check()
+    except OIDCError as exc:
+        logger.error(
+            "OIDC настроен, но провайдер не отвечает: %s (%s). Вход через "
+            "провайдера работать не будет%s",
+            exc.message,
+            exc.detail,
+            (
+                "; вход по мастер-паролю тоже отключён — верните "
+                "AUTH_DISABLE_LOGIN_FORM=false и перезапустите приложение"
+                if not settings.password_login_enabled
+                else ", остаётся вход по мастер-паролю"
+            ),
+        )
+        return
+    logger.info("OIDC: провайдер %s доступен, клиент %s", issuer, settings.oidc_client_id)
+    if settings.oidc_auto_login:
+        logger.info(
+            "OIDC_AUTO_LOGIN включён: экран входа пропускается. Чтобы открыть его "
+            "вручную, добавьте к адресу ?disableAutoLogin=true"
+        )
+    if not settings.password_login_enabled:
+        logger.warning(
+            "вход по мастер-паролю отключён (AUTH_DISABLE_LOGIN_FORM): если провайдер "
+            "станет недоступен, вернуть доступ можно только через переменные окружения"
+        )
+
+
 async def _maintenance_loop(app: FastAPI) -> None:
     settings: Settings = app.state.settings
     db: Database = app.state.db
@@ -82,6 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.fetcher = UpstreamFetcher(settings)
         app.state.cache = UpstreamCache()
         app.state.throttle = LoginThrottle()
+        app.state.oidc = OIDCProvider(settings) if settings.oidc_enabled else None
 
         app.state.db.purge_sessions()
         app.state.db.prune_logs(settings.log_retention_days, settings.log_max_rows)
@@ -90,16 +128,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if seeded:
             logger.info("добавлено встроенных шаблонов: %s", seeded)
 
+        for warning in settings.warnings:
+            logger.warning("%s", warning)
+
         if settings.demo_mode:
             logger.warning(
                 "DEMO_MODE включён: вход в админку отключён, изменить настройки "
                 "может любой, кто откроет приложение"
             )
-        elif settings.generated_password:
+        elif settings.generated_password and settings.password_login_enabled:
             logger.warning(
                 "ADMIN_PASSWORD не задан — сгенерирован временный пароль: %s",
                 settings.admin_password,
             )
+
+        if app.state.oidc is not None:
+            await _check_oidc(app.state.oidc, settings)
 
         task = asyncio.create_task(_maintenance_loop(app))
         try:
@@ -109,6 +153,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
             await app.state.fetcher.aclose()
+            if app.state.oidc is not None:
+                await app.state.oidc.aclose()
             app.state.db.close()
 
     app = FastAPI(
@@ -124,7 +170,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.include_router(admin.router)
+    app.include_router(admin.shared)
     app.include_router(admin.guarded)
+    app.include_router(auth.router)
     app.include_router(subscription.router)
     app.include_router(probe.router)
 

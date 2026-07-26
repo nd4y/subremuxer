@@ -265,10 +265,40 @@ svg {
   font-size: 0.95rem;
 }
 
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* A hairline with a word in it, separating the provider from the fallback. */
+.login__divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--on-surface-variant);
+  font-size: 0.85rem;
+}
+
+.login__divider::before,
+.login__divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--outline-variant);
+}
+
 .login__error {
   margin: 0;
   color: var(--error);
   font-size: 0.9rem;
+}
+
+.login__note {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 0.85rem;
+  line-height: 1.4;
 }
 
 @keyframes rise {
@@ -391,6 +421,43 @@ svg {
 .topbar__actions {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+
+/* Who you are signed in as. Narrow screens have no room for it. */
+.topbar__account {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 12px;
+  border-radius: var(--shape-full);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 600px) {
+  .topbar__account {
+    display: none;
+  }
+}
+
+/*
+ * A viewer has a single page, so the bottom bar would be a row with one button
+ * in it — worse than no bar at all. The rail keeps its brand mark and theme
+ * switch, which are still useful.
+ */
+body.is-viewer .navbar {
+  display: none;
+}
+
+body.is-viewer .main {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 48px);
+}
+
+body.is-viewer .snackbar {
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
 }
 
 /* ------------------------------------------------------------- navigation */
