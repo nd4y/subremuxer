@@ -92,6 +92,7 @@ const api = {
 
 const state = {
   authenticated: false,
+  demo: false,
   route: "profiles",
   meta: null,
   profiles: [],
@@ -2767,6 +2768,11 @@ function showLogin() {
 async function showApp() {
   $("#login").hidden = true;
   $("#shell").hidden = false;
+  // In demo mode there is no session to end, so the exit affordances only get in
+  // the way — but the banner has to stay visible the whole time.
+  $("#demo-banner").hidden = !state.demo;
+  $("#topbar-logout").hidden = state.demo;
+  $("#settings-logout").closest(".card").hidden = state.demo;
   state.meta = await api.get("/api/meta");
   state.settings = await api.get("/api/settings");
   // Templates and captures feed pickers on other pages, so fetch them up front.
@@ -2918,6 +2924,7 @@ async function boot() {
 
   try {
     const me = await api.get("/api/auth/me");
+    state.demo = Boolean(me.demo);
     if (me.authenticated) {
       state.authenticated = true;
       await showApp();

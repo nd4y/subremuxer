@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,6 +36,26 @@ PRUNE_INTERVAL_SECONDS = 3600
 DELETED_PROFILE_GRACE_SECONDS = 24 * 3600
 
 
+def _ensure_writable(directory: Path) -> None:
+    """Fail with an actionable message instead of a cryptic SQLite error.
+
+    Hosted platforms mount volumes owned by root while this image runs as an
+    unprivileged user, so "cannot open database file" is a permissions problem
+    far more often than a missing path.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".write-test"
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        uid = f" (uid {os.getuid()})" if hasattr(os, "getuid") else ""
+        raise RuntimeError(
+            f"каталог данных {directory} недоступен для записи{uid}: {exc}. "
+            "Дайте на него права пользователю 10001 либо укажите другой путь в DATA_DIR."
+        ) from exc
+
+
 async def _maintenance_loop(app: FastAPI) -> None:
     settings: Settings = app.state.settings
     db: Database = app.state.db
@@ -56,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings = settings
+        _ensure_writable(settings.data_dir)
         app.state.db = Database(settings.db_path)
         app.state.fetcher = UpstreamFetcher(settings)
         app.state.cache = UpstreamCache()
@@ -68,7 +90,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if seeded:
             logger.info("добавлено встроенных шаблонов: %s", seeded)
 
-        if settings.generated_password:
+        if settings.demo_mode:
+            logger.warning(
+                "DEMO_MODE включён: вход в админку отключён, изменить настройки "
+                "может любой, кто откроет приложение"
+            )
+        elif settings.generated_password:
             logger.warning(
                 "ADMIN_PASSWORD не задан — сгенерирован временный пароль: %s",
                 settings.admin_password,

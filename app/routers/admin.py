@@ -115,9 +115,11 @@ async def logout(request: Request) -> JSONResponse:
 
 @router.get("/auth/me")
 async def me(request: Request) -> dict[str, Any]:
+    if request.app.state.settings.demo_mode:
+        return {"authenticated": True, "demo": True}
     token = request.cookies.get(SESSION_COOKIE)
     authenticated = bool(token and request.app.state.db.session_valid(token))
-    return {"authenticated": authenticated}
+    return {"authenticated": authenticated, "demo": False}
 
 
 # ----------------------------------------------------------------------- meta

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import re
 import time
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -148,7 +151,40 @@ class UpstreamFetcher:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    @staticmethod
+    async def _refuse_internal_targets(url: str) -> None:
+        """Keep a public demo from being used to probe the network it runs in.
+
+        Without an admin password anyone can point a profile anywhere, which would
+        otherwise turn the demo into an open proxy into its own host's private
+        network and cloud metadata service.
+        """
+        host = urlsplit(url).hostname
+        if not host:
+            raise UpstreamError("не удалось разобрать адрес подписки")
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+        except OSError as exc:
+            raise UpstreamError(f"не удалось разрешить имя {host}: {exc}") from exc
+
+        for info in infos:
+            address = ipaddress.ip_address(info[4][0])
+            if (
+                address.is_private
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_reserved
+                or address.is_multicast
+                or address.is_unspecified
+            ):
+                raise UpstreamError(
+                    "в демо-режиме нельзя обращаться к внутренним адресам: "
+                    f"{host} разрешается в {address}"
+                )
+
     async def fetch(self, request: UpstreamRequest) -> UpstreamResult:
+        if self._settings.demo_mode:
+            await self._refuse_internal_targets(request.url)
         headers = request.build_headers()
         started = time.perf_counter()
         try:

@@ -136,3 +136,31 @@ jobs:
 
           docker logs subremuxer
           docker rm -f subremuxer
+
+      - name: Honour an assigned PORT
+        run: |
+          # Railway and friends inject PORT and route to it; ignoring it is the
+          # classic reason a container passes locally and fails a health check.
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(git rev-parse --short HEAD)"
+          docker run -d --name subremuxer-port -e PORT=7777 -p 7777:7777 \
+            -e ADMIN_PASSWORD=ci-password "$IMAGE"
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7777/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:7777/healthz | grep -q '"ok"'
+          docker logs subremuxer-port
+          docker rm -f subremuxer-port
+
+      - name: Demo mode opens the admin API and says so
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(git rev-parse --short HEAD)"
+          docker run -d --name subremuxer-demo -p 8001:8000 -e DEMO_MODE=true "$IMAGE"
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8001/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8001/api/auth/me | grep -q '"demo":true'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/api/profiles)" = "200"
+          docker logs subremuxer-demo 2>&1 | grep -q 'DEMO_MODE'
+          docker rm -f subremuxer-demo

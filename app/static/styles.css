@@ -308,6 +308,41 @@ svg {
   }
 }
 
+/* ------------------------------------------------------------ demo banner */
+
+.demo-banner {
+  position: sticky;
+  top: 0;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px max(16px, env(safe-area-inset-left));
+  padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.demo-banner__badge {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: var(--shape-full);
+  background: var(--on-tertiary-container);
+  color: var(--tertiary-container);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The app bar sticks below the banner rather than over it. */
+.demo-banner:not([hidden]) ~ .topbar {
+  top: 0;
+  padding-top: 12px;
+}
+
 /* ----------------------------------------------------------------- topbar */
 
 .topbar {

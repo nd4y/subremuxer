@@ -34,6 +34,10 @@ class Settings:
     generated_password: bool = field(default=False, init=False)
 
     admin_password: str = field(default_factory=lambda: os.getenv("ADMIN_PASSWORD", ""))
+
+    # Skips the admin login entirely. Meant for public demo instances; anyone who
+    # can reach the app can then change anything in it.
+    demo_mode: bool = field(default_factory=lambda: _env_bool("DEMO_MODE", False))
     session_ttl_hours: int = field(default_factory=lambda: _env_int("SESSION_TTL_HOURS", 24 * 14))
     cookie_secure: bool = field(default_factory=lambda: _env_bool("COOKIE_SECURE", False))
 
@@ -67,6 +71,11 @@ class Settings:
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
         self.db_path = self.data_dir / "subremuxer.db"
+        if self.demo_mode:
+            # There is nothing to log into, so a generated password would only be
+            # noise in the log.
+            self.admin_password = self.admin_password or "demo"
+            return
         if not self.admin_password:
             # A generated password is printed once at startup so a fresh container is
             # never silently wide open.

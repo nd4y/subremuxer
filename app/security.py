@@ -60,6 +60,8 @@ def client_ip(request: Request, settings: Settings) -> str | None:
 
 def require_admin(request: Request) -> None:
     """FastAPI dependency guarding every admin endpoint."""
+    if request.app.state.settings.demo_mode:
+        return
     db: Database = request.app.state.db
     token = request.cookies.get(SESSION_COOKIE)
     if not token or not db.session_valid(token):

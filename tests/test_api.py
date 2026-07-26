@@ -36,12 +36,12 @@ def test_admin_endpoints_are_closed_without_a_session(client):
 
 def test_wrong_password_is_rejected(client):
     assert client.post("/api/auth/login", json={"password": "nope"}).status_code == 401
-    assert client.get("/api/auth/me").json() == {"authenticated": False}
+    assert client.get("/api/auth/me").json() == {"authenticated": False, "demo": False}
 
 
 def test_login_then_logout(client):
     assert client.post("/api/auth/login", json={"password": ADMIN_PASSWORD}).status_code == 200
-    assert client.get("/api/auth/me").json() == {"authenticated": True}
+    assert client.get("/api/auth/me").json() == {"authenticated": True, "demo": False}
     assert client.get("/api/profiles").status_code == 200
     client.post("/api/auth/logout")
     assert client.get("/api/profiles").status_code == 401
