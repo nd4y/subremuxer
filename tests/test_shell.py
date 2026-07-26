@@ -16,7 +16,7 @@ def test_shell_is_served_without_caching(client):
 
 def test_asset_urls_carry_a_content_hash(client):
     """Without this, a browser keeps running the previous release's JS after the
-    container is updated — which is exactly what happened during development."""
+    container is updated."""
     html = client.get("/").text
     for asset in ("app.js", "help.js", "styles.css"):
         match = re.search(rf"/static/{re.escape(asset)}\?v=([0-9a-f]{{10}})", html)
