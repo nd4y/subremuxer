@@ -6,6 +6,7 @@ import base64
 
 from fastapi import APIRouter, Request, Response
 
+from .. import APP_NAME
 from ..probe import Capture, ProbeRepository, get_probe_token, html_page, subscription_body
 from ..security import client_ip
 
@@ -13,7 +14,7 @@ router = APIRouter()
 
 # Clients show this as the profile name. Non-ASCII header values have to be
 # base64-wrapped, the same convention the panels use.
-_PROFILE_TITLE = "base64:" + base64.b64encode("subremuxer · захват".encode()).decode("ascii")
+_PROFILE_TITLE = "base64:" + base64.b64encode(f"{APP_NAME} · захват".encode()).decode("ascii")
 
 
 def _wants_html(request: Request) -> bool:

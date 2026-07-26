@@ -100,7 +100,7 @@ def test_a_browser_gets_a_readable_page(admin):
 def test_a_browser_without_hwid_is_warned(admin):
     response = admin.get(probe_url(admin), headers={"accept": "text/html", "user-agent": "Mozilla/5.0"})
     assert "x-hwid" in response.text
-    assert "subremuxer и подставляет HWID сам" in response.text
+    assert "подставляет HWID сам" in response.text
 
 
 def test_html_is_escaped(admin):
@@ -128,6 +128,74 @@ def test_captures_can_be_removed_one_by_one_and_all_at_once(admin):
 
     assert admin.delete("/api/probe/captures").json()["deleted"] == 1
     assert admin.get("/api/probe").json()["captures"] == []
+
+
+def test_a_deleted_capture_can_be_restored(admin):
+    url = probe_url(admin)
+    admin.get(url, headers=HEADERS)
+    admin.get(url, headers=HEADERS)
+
+    captured = admin.get("/api/probe").json()["captures"][0]
+    assert captured["seen_count"] == 2
+
+    admin.delete(f"/api/probe/captures?capture_id={captured['id']}")
+    assert admin.get("/api/probe").json()["captures"] == []
+
+    restored = admin.post("/api/probe/captures/restore", json={"captures": [captured]})
+    assert restored.json()["restored"] == 1
+
+    back = admin.get("/api/probe").json()["captures"][0]
+    assert back["hwid"] == HEADERS["x-hwid"]
+    assert back["device_model"] == "Pixel 9"
+    # Timestamps and the counter survive, so the row is not silently reset.
+    assert back["seen_count"] == 2
+    assert back["first_ts"] == captured["first_ts"]
+    assert back["last_ts"] == captured["last_ts"]
+    assert back["headers"] == captured["headers"]
+
+
+def test_clearing_everything_can_be_restored_in_one_go(admin):
+    url = probe_url(admin)
+    admin.get(url, headers=HEADERS)
+    admin.get(url, headers={**HEADERS, "x-hwid": "SECONDdevice123", "x-device-model": "Pixel 8"})
+
+    captures = admin.get("/api/probe").json()["captures"]
+    assert len(captures) == 2
+
+    admin.delete("/api/probe/captures")
+    assert admin.get("/api/probe").json()["captures"] == []
+
+    assert admin.post("/api/probe/captures/restore", json={"captures": captures}).json()[
+        "restored"
+    ] == 2
+    assert len(admin.get("/api/probe").json()["captures"]) == 2
+
+
+def test_restoring_skips_a_device_that_came_back_on_its_own(admin):
+    """The undo window is seven seconds; a polling client can reappear inside it."""
+    url = probe_url(admin)
+    admin.get(url, headers=HEADERS)
+    captured = admin.get("/api/probe").json()["captures"][0]
+
+    admin.delete("/api/probe/captures")
+    admin.get(url, headers=HEADERS)  # the same device checks in again
+
+    result = admin.post("/api/probe/captures/restore", json={"captures": [captured]})
+    assert result.json()["restored"] == 0
+    assert len(admin.get("/api/probe").json()["captures"]) == 1, "no duplicate row"
+
+
+def test_restore_rejects_a_non_list(admin):
+    assert admin.post("/api/probe/captures/restore", json={"captures": "nope"}).status_code == 400
+
+
+def test_restore_ignores_junk_entries(admin):
+    result = admin.post("/api/probe/captures/restore", json={"captures": ["nope", 42, None]})
+    assert result.json()["restored"] == 0
+
+
+def test_restore_needs_a_session(client):
+    assert client.post("/api/probe/captures/restore", json={"captures": []}).status_code == 401
 
 
 def test_rotating_the_token_breaks_the_old_link(admin):

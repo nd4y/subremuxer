@@ -127,7 +127,7 @@ def parse(content: str) -> dict[str, Any]:
     kind = str(data.get("kind", ""))
     if kind not in {KIND_PROFILE, KIND_BUNDLE}:
         raise PortabilityError(
-            "файл не похож на конфигурацию subremuxer: ожидалось поле "
+            "файл не похож на конфигурацию Sub Remuxer: ожидалось поле "
             f"kind = {KIND_PROFILE} или {KIND_BUNDLE}"
         )
     version = int(data.get("version") or 0)

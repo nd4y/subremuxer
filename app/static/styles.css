@@ -1,5 +1,5 @@
 /* ==========================================================================
-   subremuxer — Material 3 Expressive
+   Sub Remuxer — Material 3 Expressive
    Tokens first, then layout, then components. No build step, no web fonts.
    ========================================================================== */
 
@@ -2029,6 +2029,162 @@ svg {
   margin: 0;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------- help */
+
+.help__toc {
+  position: sticky;
+  top: -4px;
+  z-index: 2;
+  padding-top: 4px;
+  padding-bottom: 8px;
+  background: var(--surface-container-low);
+}
+
+.help__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 8px;
+  scroll-margin-top: 56px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
+}
+
+.help__title {
+  margin: 8px 0 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--primary);
+}
+
+.help__p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.help__note,
+.help__warn {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--shape-m);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.help__note {
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+}
+
+.help__warn {
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+}
+
+.help__steps,
+.help__list {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.help__steps li::marker {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.help__figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.help__figure figcaption {
+  font-size: 0.78rem;
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+
+.help__code {
+  margin: 0;
+  padding: 14px;
+  border-radius: var(--shape-m);
+  background: var(--surface-container-highest);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.help__tablewrap {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-radius: var(--shape-m);
+  background: var(--surface-container);
+}
+
+.help__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 460px;
+}
+
+.help__table th,
+.help__table td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.45;
+}
+
+.help__table th {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+
+.help__table tbody tr {
+  border-top: 1px solid var(--outline-variant);
+}
+
+.help__table td:first-child {
+  font-weight: 600;
+}
+
+.demo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--shape-l);
+  background: var(--surface-container);
+}
+
+.demo__title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.demo .test-list {
+  max-height: none;
 }
 
 /* -------------------------------------------------------------- skeletons */

@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from . import APP_NAME
 from .db import Database
 
 PROBE_TOKEN_SETTING = "probe_token"
@@ -145,6 +146,61 @@ class ProbeRepository:
             cursor = self.db.execute("DELETE FROM probe_captures WHERE id = ?", (capture_id,))
         return cursor.rowcount
 
+    def restore(self, rows: list[dict[str, Any]]) -> int:
+        """Put deleted captures back, timestamps and counters intact.
+
+        Captures are recreated from what the caller hands back rather than being
+        soft-deleted, because a capture is nothing but the headers a client sent —
+        there is no state to keep alive. A device that reappeared during the undo
+        window is left as it is instead of being duplicated.
+        """
+        restored = 0
+        for row in rows[:200]:
+            if not isinstance(row, dict):
+                continue
+            capture = Capture(
+                user_agent=str(row.get("user_agent") or "")[:512],
+                hwid=str(row.get("hwid") or "")[:128],
+                device_os=str(row.get("device_os") or "")[:128],
+                device_ver=str(row.get("device_ver") or "")[:128],
+                device_model=str(row.get("device_model") or "")[:128],
+                headers=row.get("headers") if isinstance(row.get("headers"), dict) else {},
+            )
+            key = (
+                capture.user_agent,
+                capture.hwid,
+                capture.device_os,
+                capture.device_ver,
+                capture.device_model,
+            )
+            existing = self.db.query_one(
+                "SELECT id FROM probe_captures WHERE user_agent = ? AND hwid = ? "
+                "AND device_os = ? AND device_ver = ? AND device_model = ?",
+                key,
+            )
+            if existing is not None:
+                continue
+
+            now = int(time.time())
+            first_ts = int(row.get("first_ts") or now)
+            last_ts = int(row.get("last_ts") or first_ts)
+            seen_count = max(1, int(row.get("seen_count") or 1))
+            self.db.execute(
+                "INSERT INTO probe_captures(first_ts, last_ts, seen_count, client_ip, "
+                "user_agent, hwid, device_os, device_ver, device_model, headers_json) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    first_ts,
+                    last_ts,
+                    seen_count,
+                    (str(row.get("client_ip")) if row.get("client_ip") else None),
+                    *key,
+                    json.dumps(capture.headers or {}, ensure_ascii=False),
+                ),
+            )
+            restored += 1
+        return restored
+
 
 # --------------------------------------------------------------------- output
 
@@ -171,7 +227,7 @@ def subscription_body(capture: Capture) -> str:
         lines.append(_node_uri(f"📱 {device}"))
     if capture.user_agent:
         lines.append(_node_uri(f"🧩 {capture.user_agent}"))
-    lines.append(_node_uri("↩️ Откройте subremuxer — данные захвачены"))
+    lines.append(_node_uri(f"↩️ Откройте {APP_NAME} — данные захвачены"))
     return base64.b64encode("\n".join(lines).encode("utf-8")).decode("ascii")
 
 
@@ -200,13 +256,13 @@ def html_page(capture: Capture) -> str:
         ""
         if capture.hwid
         else "<p class='warn'>Этот клиент не прислал заголовок <code>x-hwid</code> — "
-        "именно для таких случаев subremuxer и подставляет HWID сам.</p>"
+        f"именно для таких случаев {_escape(APP_NAME)} и подставляет HWID сам.</p>"
     )
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<title>subremuxer — захват клиента</title>
+<title>{_escape(APP_NAME)} — захват клиента</title>
 <style>
   :root {{ color-scheme: light dark; --bg:#fef7ff; --fg:#1d1b20; --card:#f7f2fa;
            --muted:#49454f; --accent:#6750a4; --warn:#7d5260; }}
@@ -231,8 +287,8 @@ def html_page(capture: Capture) -> str:
 </style></head>
 <body><main class="card">
 <h1>Данные захвачены</h1>
-<p>Вернитесь в subremuxer — этот клиент появился в разделе «Захват», оттуда его
-можно подставить в профиль.</p>
+<p>Вернитесь в {_escape(APP_NAME)} — этот клиент появился в разделе «Захват»,
+оттуда его можно подставить в профиль.</p>
 {warning}
 <table>{cells}</table>
 </main></body></html>

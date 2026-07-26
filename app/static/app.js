@@ -1,4 +1,4 @@
-/* subremuxer admin UI — vanilla JS, no build step. */
+/* Sub Remuxer admin UI — vanilla JS, no build step. */
 "use strict";
 
 /* ------------------------------------------------------------------ utils */
@@ -234,7 +234,22 @@ async function copyToClipboard(text, message = "Скопировано") {
 
 /* ------------------------------------------------------------------ sheet */
 
-const sheet = { node: null, scrim: null, open: false, onClose: null, historyPushed: false };
+const sheet = {
+  node: null,
+  scrim: null,
+  open: false,
+  onClose: null,
+  historyPushed: false,
+  watcher: null,
+};
+
+/**
+ * CloseWatcher is what lets Android draw the predictive-back preview: it tells
+ * the browser "this gesture will dismiss some UI", instead of the browser having
+ * to guess from a history entry. Where it is missing we fall back to pushing a
+ * history entry, which still closes the sheet — just without the preview.
+ */
+const HAS_CLOSE_WATCHER = typeof window.CloseWatcher === "function";
 
 function openSheet({ title, body, footer, onClose, wide = false }) {
   sheet.node = $("#sheet");
@@ -257,16 +272,32 @@ function openSheet({ title, body, footer, onClose, wide = false }) {
   sheet.onClose = onClose || null;
 
   // Android's back gesture should dismiss the sheet, not leave the app.
-  history.pushState({ sheet: true }, "");
-  sheet.historyPushed = true;
+  if (HAS_CLOSE_WATCHER) {
+    sheet.watcher = new CloseWatcher();
+    sheet.watcher.onclose = () => {
+      sheet.watcher = null;
+      closeSheet({ fromWatcher: true });
+    };
+  } else {
+    history.pushState({ sheet: true }, "");
+    sheet.historyPushed = true;
+  }
 
   const focusTarget = bodyNode.querySelector("input, select, textarea, button");
   if (focusTarget && window.matchMedia("(min-width: 840px)").matches) focusTarget.focus();
 }
 
-function closeSheet({ fromHistory = false } = {}) {
+function closeSheet({ fromHistory = false, fromWatcher = false } = {}) {
   if (!sheet.open) return;
   sheet.open = false;
+
+  if (sheet.watcher && !fromWatcher) {
+    const watcher = sheet.watcher;
+    sheet.watcher = null;
+    watcher.destroy();
+  }
+  sheet.watcher = null;
+
   sheet.node.classList.add("is-closing");
   sheet.scrim.classList.add("is-closing");
   document.body.classList.remove("is-locked");
@@ -2208,14 +2239,55 @@ function captureCard(capture) {
         type: "button",
         html: icons.trash,
         "aria-label": "Удалить захват",
-        onclick: async () => {
-          await api.del(`/api/probe/captures?capture_id=${capture.id}`);
-          await loadProbe();
-          toast("Захват удалён");
-        },
+        onclick: () =>
+          deleteCaptures([capture], {
+            message: `Захват «${capture.device_model || capture.user_agent || "устройство"}» удалён`,
+            request: () => api.del(`/api/probe/captures?capture_id=${capture.id}`),
+          }),
       })
     )
   );
+}
+
+/**
+ * Same undo pattern as profiles. A capture is only the headers a client sent, so
+ * undo recreates it from the copy the page still holds instead of the server
+ * having to keep a tombstone around.
+ */
+async function deleteCaptures(rows, { message, request }) {
+  const snapshot = JSON.parse(JSON.stringify(rows));
+  try {
+    await request();
+  } catch (error) {
+    toast(error.message, "error");
+    return;
+  }
+
+  const removed = new Set(snapshot.map((item) => item.id));
+  if (state.probe) {
+    state.probe.captures = state.probe.captures.filter((item) => !removed.has(item.id));
+    renderProbe();
+  }
+
+  toast(message, {
+    duration: 7000,
+    action: {
+      label: "Отменить",
+      onClick: async () => {
+        try {
+          const result = await api.post("/api/probe/captures/restore", { captures: snapshot });
+          await loadProbe();
+          toast(
+            result.restored === snapshot.length
+              ? "Восстановлено"
+              : `Восстановлено ${result.restored} из ${snapshot.length} — остальные успели появиться заново`
+          );
+        } catch (error) {
+          toast(error.message, "error");
+        }
+      },
+    },
+  });
 }
 
 function renderProbe() {
@@ -2449,6 +2521,171 @@ async function saveSettings() {
   }
 }
 
+/* ------------------------------------------------------------------ help */
+
+const DEMO_NAMES = [
+  "🇳🇱 NL-1 LTE",
+  "🇷🇺 RU-1 LTE",
+  "🇷🇺 RU-2 Home",
+  "🇩🇪 DE-1 LTE",
+  "🇸🇪 SE-1",
+  "Трафик: осталось 42 ГБ",
+].join("\n");
+
+/** A live playground wired to the same dry-run endpoint the profile editor uses. */
+function filterDemo() {
+  const names = textareaField({ id: "demo-names", label: "Имена серверов", value: DEMO_NAMES, rows: 6 });
+  const contains = field({ id: "demo-contains", label: "содержит", value: "LTE" });
+  const notContains = field({ id: "demo-not-contains", label: "не содержит", value: "RU" });
+  const regexBox = h("div", { class: "regex-preview" });
+  const results = h("div", { class: "test-list" });
+
+  const inputs = [$("textarea", names), $("input", contains), $("input", notContains)];
+  let timer = null;
+
+  async function run() {
+    const conditions = [];
+    if (inputs[1].value.trim()) conditions.push({ op: "contains", value: inputs[1].value.trim() });
+    if (inputs[2].value.trim()) {
+      conditions.push({ op: "not_contains", value: inputs[2].value.trim() });
+    }
+    const list = inputs[0].value.split("\n").map((line) => line.trim()).filter(Boolean);
+
+    try {
+      const data = await api.post("/api/filter/dry-run", {
+        filter: { mode: "builder", match: "all", conditions },
+        names: list,
+      });
+      regexBox.className = data.regex ? "regex-preview" : "regex-preview regex-preview--empty";
+      regexBox.textContent = data.regex || "Условий нет — пройдут все серверы.";
+      results.replaceChildren(
+        ...data.results.map((item) =>
+          h(
+            "div",
+            { class: `node${item.kept ? "" : " node--dropped"}` },
+            h("span", { class: "node__mark", text: item.kept ? "✓" : "✕" }),
+            h(
+              "span",
+              { class: "node__text" },
+              h("span", { class: "node__name", text: item.name }),
+              item.kept ? null : h("span", { class: "node__reason", text: item.detail || item.reason })
+            )
+          )
+        )
+      );
+    } catch (error) {
+      regexBox.className = "regex-preview regex-preview--empty";
+      regexBox.textContent = error.message;
+    }
+  }
+
+  inputs.forEach((input) =>
+    input.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(run, 350);
+    })
+  );
+  run();
+
+  return h(
+    "div",
+    { class: "demo" },
+    h("p", { class: "demo__title", text: "Попробуйте прямо здесь" }),
+    names,
+    h("div", { class: "grid grid--2" }, contains, notContains),
+    regexBox,
+    results
+  );
+}
+
+function helpBlock(block) {
+  if (block.p) return h("p", { class: "help__p", text: block.p });
+  if (block.note) return h("p", { class: "help__note", text: block.note });
+  if (block.warn) return h("p", { class: "help__warn", text: block.warn });
+  if (block.demo === "filter") return filterDemo();
+
+  if (block.steps) {
+    return h(
+      "ol",
+      { class: "help__steps" },
+      block.steps.map((step) => h("li", { text: step }))
+    );
+  }
+  if (block.list) {
+    return h(
+      "ul",
+      { class: "help__list" },
+      block.list.map((item) => h("li", { text: item }))
+    );
+  }
+  if (block.code) {
+    return h(
+      "figure",
+      { class: "help__figure" },
+      h("pre", { class: "help__code" }, h("code", { text: block.code })),
+      block.caption ? h("figcaption", { text: block.caption }) : null
+    );
+  }
+  if (block.table) {
+    return h(
+      "div",
+      { class: "help__tablewrap" },
+      h(
+        "table",
+        { class: "help__table" },
+        h("thead", {}, h("tr", {}, block.table.head.map((cell) => h("th", { text: cell })))),
+        h(
+          "tbody",
+          {},
+          block.table.rows.map((row) => h("tr", {}, row.map((cell) => h("td", { text: cell }))))
+        )
+      )
+    );
+  }
+  return null;
+}
+
+function showHelp(sectionId = null) {
+  const sections = window.HELP_SECTIONS || [];
+  const bodies = sections.map((section) =>
+    h(
+      "section",
+      { class: "help__section", id: `help-${section.id}` },
+      h("h3", { class: "help__title", text: section.title }),
+      ...section.blocks.map(helpBlock).filter(Boolean)
+    )
+  );
+
+  const toc = h(
+    "div",
+    { class: "chipset chipset--scroll help__toc" },
+    sections.map((section) =>
+      h("button", {
+        class: "chip",
+        type: "button",
+        text: section.title,
+        onclick: () => {
+          const target = $(`#help-${section.id}`);
+          target?.scrollIntoView({ behavior: "smooth", block: "start" });
+        },
+      })
+    )
+  );
+
+  openSheet({
+    title: "Справка",
+    wide: true,
+    body: [toc, ...bodies],
+    footer: [
+      h("button", { class: "btn btn--filled", type: "button", text: "Понятно", onclick: () => closeSheet() }),
+    ],
+  });
+
+  if (sectionId) {
+    setTimeout(() => $(`#help-${sectionId}`)?.scrollIntoView({ block: "start" }), 60);
+  }
+}
+
 /* ----------------------------------------------------------------- router */
 
 const PAGES = {
@@ -2481,6 +2718,42 @@ async function navigate(route, { silent = false } = {}) {
   }
 }
 
+/* -------------------------------------------------------------------- pwa */
+
+let installPrompt = null;
+
+function initPwa() {
+  if ("serviceWorker" in navigator) {
+    // A worker only registers over HTTPS or on localhost; elsewhere the app just
+    // runs without offline support instead of throwing.
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPrompt = event;
+    $("#install-card").hidden = false;
+  });
+
+  window.addEventListener("appinstalled", () => {
+    installPrompt = null;
+    $("#install-card").hidden = true;
+    toast("Приложение установлено");
+  });
+
+  $("#install-app").addEventListener("click", async () => {
+    if (!installPrompt) {
+      toast("Установка недоступна в этом браузере", "error");
+      return;
+    }
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    installPrompt = null;
+    $("#install-card").hidden = true;
+    if (outcome !== "accepted") toast("Установка отменена");
+  });
+}
+
 /* -------------------------------------------------------------- auth flow */
 
 function showLogin() {
@@ -2506,6 +2779,7 @@ async function showApp() {
 async function boot() {
   applyTheme(localStorage.getItem(THEME_KEY) || "auto");
   initSheetDrag();
+  initPwa();
 
   $("#login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2540,6 +2814,8 @@ async function boot() {
   $("#logs-more").addEventListener("click", () => loadLogs({ append: true }));
   $("#template-new").addEventListener("click", () => showTemplateEditor(null));
   $("#config-editor").addEventListener("click", () => showConfigEditor());
+  $("#topbar-help").addEventListener("click", () => showHelp());
+  $("#settings-help").addEventListener("click", () => showHelp());
   $("#import-open").addEventListener("click", () => showImportSheet());
   $("#export-yaml").addEventListener("click", () =>
     downloadExport("/api/export?format=yaml", "subremuxer-config.yaml")
@@ -2571,14 +2847,16 @@ async function boot() {
     }
   });
 
-  $("#probe-clear").addEventListener("click", async () => {
-    try {
-      await api.del("/api/probe/captures");
-      await loadProbe();
-      toast("Список очищен");
-    } catch (error) {
-      toast(error.message, "error");
+  $("#probe-clear").addEventListener("click", () => {
+    const captures = state.probe?.captures || [];
+    if (!captures.length) {
+      toast("Список и так пуст");
+      return;
     }
+    deleteCaptures(captures, {
+      message: `Удалено захватов: ${captures.length}`,
+      request: () => api.del("/api/probe/captures"),
+    });
   });
 
   $("#theme-segmented").addEventListener("click", (event) => {
@@ -2617,11 +2895,13 @@ async function boot() {
   }
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && sheet.open) closeSheet();
+    // CloseWatcher already answers Escape itself; handling it twice would close
+    // the sheet and then immediately swallow the next one.
+    if (event.key === "Escape" && sheet.open && !sheet.watcher) closeSheet();
   });
 
   window.addEventListener("popstate", () => {
-    if (sheet.open) {
+    if (sheet.open && sheet.historyPushed) {
       closeSheet({ fromHistory: true });
       return;
     }

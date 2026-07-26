@@ -482,6 +482,15 @@ async def clear_captures(request: Request, capture_id: int | None = None) -> dic
     return {"deleted": _probes(request).clear(capture_id)}
 
 
+@guarded.post("/probe/captures/restore")
+async def restore_captures(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, int]:
+    """Undo a capture deletion by recreating the rows the caller kept."""
+    rows = payload.get("captures") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="captures должен быть списком")
+    return {"restored": _probes(request).restore(rows)}
+
+
 # ------------------------------------------------------------- filter testing
 
 
