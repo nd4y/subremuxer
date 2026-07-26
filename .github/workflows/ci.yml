@@ -111,12 +111,28 @@ jobs:
           IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(git rev-parse --short HEAD)"
           docker run -d --name subremuxer -p 8000:8000 -e ADMIN_PASSWORD=ci-password "$IMAGE"
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then break; fi
             sleep 1
           done
+
           curl -fsS http://127.0.0.1:8000/healthz | grep -q '"ok"'
-          curl -fsS http://127.0.0.1:8000/ | grep -q 'subremuxer'
+
+          # The shell, with its asset URLs versioned so a redeploy cannot leave a
+          # browser on the previous release's JS.
+          shell=$(curl -fsS http://127.0.0.1:8000/)
+          echo "$shell" | grep -q '<title>Sub Remuxer</title>'
+          echo "$shell" | grep -qE '/static/app\.js\?v=[0-9a-f]{10}'
+
+          # Installability: manifest, both icon sizes, and a root-scoped worker.
+          curl -fsS http://127.0.0.1:8000/manifest.webmanifest | grep -q '"start_url"'
+          curl -fsS -o /dev/null http://127.0.0.1:8000/static/icon-192.png
+          curl -fsS -o /dev/null http://127.0.0.1:8000/static/icon-512.png
+          curl -fsSD - -o /dev/null http://127.0.0.1:8000/sw.js | grep -qi 'service-worker-allowed: /'
+          # The placeholder must have been substituted, or the cache never rotates.
+          ! curl -fsS http://127.0.0.1:8000/sw.js | grep -q '__VERSION__'
+
           # An unauthenticated admin call must be refused.
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/profiles)" = "401"
+
           docker logs subremuxer
           docker rm -f subremuxer
