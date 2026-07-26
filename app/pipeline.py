@@ -99,15 +99,11 @@ class UpstreamCache:
             self._store.pop(key, None)
 
 
-def resolve_hwid(profile: Profile, defaults: Defaults) -> str | None:
-    return profile.hwid or defaults.hwid
-
-
 def build_request(
     profile: Profile, defaults: Defaults, client_headers: dict[str, str]
 ) -> UpstreamRequest:
     lowered = {k.lower(): v for k, v in client_headers.items()}
-    plan = plan_hwid(profile.hwid_mode, resolve_hwid(profile, defaults), lowered.get("x-hwid"))
+    plan = plan_hwid(profile.hwid_mode, profile.hwid or defaults.hwid, lowered.get("x-hwid"))
     return UpstreamRequest(
         url=profile.upstream_url,
         client_headers=client_headers,
@@ -274,35 +270,32 @@ async def preview_filter(
 ) -> PreviewResult:
     """Run the whole pipeline for the admin's *Test* button, without serving anything."""
     request = build_request(profile, defaults, client_headers or {})
+
+    def preview(**overrides: Any) -> PreviewResult:
+        values: dict[str, Any] = {
+            "detected_format": None,
+            "format_label": None,
+            "upstream_status": 0,
+            "upstream_ms": 0,
+            "hwid_sent": request.hwid_plan.hwid_sent,
+            "hwid_action": request.hwid_plan.action,
+            "regex": compiled.builder_regex,
+            "nodes": [],
+            "total": 0,
+            "kept": 0,
+            **overrides,
+        }
+        return PreviewResult(**values)
+
     try:
         result = await fetcher.fetch(request)
     except UpstreamError as exc:
-        return PreviewResult(
-            detected_format=None,
-            format_label=None,
-            upstream_status=0,
-            upstream_ms=0,
-            hwid_sent=request.hwid_plan.hwid_sent,
-            hwid_action=request.hwid_plan.action,
-            regex=compiled.builder_regex,
-            nodes=[],
-            total=0,
-            kept=0,
-            error=str(exc),
-        )
+        return preview(error=str(exc))
 
     if result.status_code >= 400:
-        return PreviewResult(
-            detected_format=None,
-            format_label=None,
+        return preview(
             upstream_status=result.status_code,
             upstream_ms=result.elapsed_ms,
-            hwid_sent=request.hwid_plan.hwid_sent,
-            hwid_action=request.hwid_plan.action,
-            regex=compiled.builder_regex,
-            nodes=[],
-            total=0,
-            kept=0,
             error=f"апстрим ответил {result.status_code}",
             body_preview=result.text[:2000],
         )
@@ -310,30 +303,19 @@ async def preview_filter(
     try:
         parsed = detect_and_parse(result.text)
     except UnknownFormatError as exc:
-        return PreviewResult(
-            detected_format=None,
-            format_label=None,
+        return preview(
             upstream_status=result.status_code,
             upstream_ms=result.elapsed_ms,
-            hwid_sent=request.hwid_plan.hwid_sent,
-            hwid_action=request.hwid_plan.action,
-            regex=compiled.builder_regex,
-            nodes=[],
-            total=0,
-            kept=0,
             error=f"формат не распознан: {exc}",
             body_preview=result.text[:2000],
         )
 
     decisions = apply_filter(parsed.nodes, compiled)
-    return PreviewResult(
+    return preview(
         detected_format=parsed.format.value,
         format_label=FORMAT_LABELS.get(parsed.format),
         upstream_status=result.status_code,
         upstream_ms=result.elapsed_ms,
-        hwid_sent=request.hwid_plan.hwid_sent,
-        hwid_action=request.hwid_plan.action,
-        regex=compiled.builder_regex,
         nodes=[decision.as_dict() for decision in decisions],
         total=len(decisions),
         kept=sum(1 for decision in decisions if decision.kept),

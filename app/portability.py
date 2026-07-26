@@ -7,12 +7,11 @@ import without the user having to say what it is.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import yaml
 
-from .profiles import ProfileError, ProfileRepository, validate_profile_payload
+from .profiles import ProfileError, ProfileRepository, unique_name, validate_profile_payload
 from .templates import TemplateError, TemplateRepository, validate_payload
 
 EXPORT_VERSION = 1
@@ -139,15 +138,9 @@ def parse(content: str) -> dict[str, Any]:
 
 
 def _unique_name(name: str, taken: set[str]) -> str:
-    base = re.sub(r"\s*\(импорт(?:\s+\d+)?\)$", "", name).strip() or "Импортированный профиль"
-    if base not in taken:
-        return base[:120]
-    candidate = f"{base} (импорт)"
-    index = 2
-    while candidate in taken:
-        candidate = f"{base} (импорт {index})"
-        index += 1
-    return candidate[:120]
+    return unique_name(
+        name, taken, marker="импорт", fallback="Импортированный профиль", keep_base=True
+    )
 
 
 class Importer:

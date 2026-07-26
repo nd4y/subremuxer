@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import logging
+from dataclasses import asdict
 from typing import Any
 
 import segno
@@ -27,7 +28,7 @@ from ..filtering import (
 )
 from ..formats import FORMAT_LABELS, KNOWN_PROTOCOLS
 from ..logs import LogRepository
-from ..pipeline import Defaults, preview_filter
+from ..pipeline import Defaults, UpstreamCache, preview_filter
 from ..portability import (
     ConfigApplier,
     Importer,
@@ -83,6 +84,19 @@ def _templates(request: Request) -> TemplateRepository:
 
 def _probes(request: Request) -> ProbeRepository:
     return ProbeRepository(request.app.state.db)
+
+
+def _drop_cache(request: Request) -> None:
+    """Forget every cached upstream body after a change that affects all profiles."""
+    request.app.state.cache = UpstreamCache()
+
+
+def _with_link(profile: Profile, request: Request) -> dict[str, Any]:
+    """The profile plus the one field only the web layer can add — its public URL."""
+    return {
+        **profile.as_dict(),
+        "subscription_url": f"{_public_base(request)}/s/{profile.token}",
+    }
 
 
 # ----------------------------------------------------------------------- auth
@@ -196,7 +210,7 @@ async def put_settings(request: Request, payload: dict[str, Any] = Body(...)) ->
     for key in ("default_hwid", "default_device_os", "default_device_ver", "default_device_model"):
         if key in payload:
             db.set_setting(key, str(payload[key] or "").strip())
-    request.app.state.cache = type(request.app.state.cache)()
+    _drop_cache(request)
     return await get_settings(request)
 
 
@@ -210,10 +224,7 @@ VIEWER_PROFILE_FIELDS = ("id", "name", "enabled", "subscription_url", "updated_a
 
 
 def _profile_view(profile: Profile, request: Request, identity: Identity) -> dict[str, Any]:
-    data = {
-        **profile.as_dict(),
-        "subscription_url": f"{_public_base(request)}/s/{profile.token}",
-    }
+    data = _with_link(profile, request)
     if identity.is_admin:
         return data
     return {key: data[key] for key in VIEWER_PROFILE_FIELDS if key in data}
@@ -257,7 +268,7 @@ async def create_profile(request: Request, payload: dict[str, Any] = Body(...)) 
         profile = _repo(request).create(payload)
     except (ProfileError, FilterError, TemplateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+    return _with_link(profile, request)
 
 
 @guarded.post("/profiles/{profile_id}/clone", status_code=201)
@@ -266,7 +277,7 @@ async def clone_profile(request: Request, profile_id: int) -> dict[str, Any]:
         profile = _repo(request).clone(profile_id)
     except (ProfileError, FilterError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+    return _with_link(profile, request)
 
 
 @guarded.post("/profiles/{profile_id}/restore")
@@ -277,7 +288,7 @@ async def restore_profile(request: Request, profile_id: int) -> dict[str, Any]:
     except ProfileError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     request.app.state.cache.invalidate_profile(profile_id)
-    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+    return _with_link(profile, request)
 
 
 @guarded.put("/profiles/{profile_id}")
@@ -289,7 +300,7 @@ async def update_profile(
     except (ProfileError, FilterError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     request.app.state.cache.invalidate_profile(profile_id)
-    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+    return _with_link(profile, request)
 
 
 @guarded.delete("/profiles/{profile_id}")
@@ -307,7 +318,7 @@ async def rotate_token(request: Request, profile_id: int) -> dict[str, Any]:
     except ProfileError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     request.app.state.cache.invalidate_profile(profile_id)
-    return {**profile.as_dict(), "subscription_url": f"{_public_base(request)}/s/{profile.token}"}
+    return _with_link(profile, request)
 
 
 def qr_svg(data: str) -> str:
@@ -384,7 +395,7 @@ async def import_configuration(
     except PortabilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    request.app.state.cache = type(request.app.state.cache)()
+    _drop_cache(request)
     return {
         "kind": document["kind"],
         "profiles_created": result["profiles_created"],
@@ -439,7 +450,7 @@ async def write_config(request: Request, payload: dict[str, Any] = Body(...)) ->
     except PortabilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    request.app.state.cache = type(request.app.state.cache)()
+    _drop_cache(request)
     fmt = str(payload.get("format") or "yaml")
     if fmt not in EXPORT_MEDIA_TYPES:
         fmt = "yaml"
@@ -588,25 +599,24 @@ async def test_filter(request: Request, payload: dict[str, Any] = Body(...)) -> 
     profile_id = payload.get("profile_id")
     repo = _repo(request)
 
+    stored: Profile | None = None
     if profile_id:
         stored = repo.get(int(profile_id))
         if stored is None:
             raise HTTPException(status_code=404, detail="Профиль не найден")
-        upstream_url = str(payload.get("upstream_url") or stored.upstream_url)
-        hwid_mode = str(payload.get("hwid_mode") or stored.hwid_mode)
-        hwid = payload.get("hwid", stored.hwid)
-        upstream_ua = payload.get("upstream_ua", stored.upstream_ua)
-        device_os = payload.get("device_os", stored.device_os)
-        device_ver = payload.get("device_ver", stored.device_ver)
-        device_model = payload.get("device_model", stored.device_model)
-    else:
-        upstream_url = str(payload.get("upstream_url") or "")
-        hwid_mode = str(payload.get("hwid_mode") or "override")
-        hwid = payload.get("hwid")
-        upstream_ua = payload.get("upstream_ua")
-        device_os = payload.get("device_os")
-        device_ver = payload.get("device_ver")
-        device_model = payload.get("device_model")
+
+    def pick(key: str) -> Any:
+        # The payload wins even with an empty value — that is how the form says
+        # "cleared"; only an absent key falls back to the stored profile.
+        return payload.get(key, getattr(stored, key) if stored is not None else None)
+
+    upstream_url = str(payload.get("upstream_url") or (stored.upstream_url if stored else ""))
+    hwid_mode = str(payload.get("hwid_mode") or (stored.hwid_mode if stored else "override"))
+    hwid = pick("hwid")
+    upstream_ua = pick("upstream_ua")
+    device_os = pick("device_os")
+    device_ver = pick("device_ver")
+    device_model = pick("device_model")
 
     if not upstream_url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Укажите корректную ссылку на подписку")
@@ -641,20 +651,7 @@ async def test_filter(request: Request, payload: dict[str, Any] = Body(...)) -> 
         fetcher=request.app.state.fetcher,
         compiled=compiled,
     )
-    return {
-        "detected_format": result.detected_format,
-        "format_label": result.format_label,
-        "upstream_status": result.upstream_status,
-        "upstream_ms": result.upstream_ms,
-        "hwid_sent": result.hwid_sent,
-        "hwid_action": result.hwid_action,
-        "regex": result.regex,
-        "nodes": result.nodes,
-        "total": result.total,
-        "kept": result.kept,
-        "error": result.error,
-        "body_preview": result.body_preview,
-    }
+    return asdict(result)
 
 
 # ----------------------------------------------------------------------- logs

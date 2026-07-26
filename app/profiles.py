@@ -229,12 +229,27 @@ def new_token() -> str:
     return secrets.token_urlsafe(TOKEN_BYTES)
 
 
-def _unique_copy_name(name: str, taken: set[str]) -> str:
-    base = re.sub(r"\s*\(копия(?:\s+\d+)?\)$", "", name).strip() or "Профиль"
-    candidate = f"{base} (копия)"
+def unique_name(
+    name: str,
+    taken: set[str],
+    *,
+    marker: str,
+    fallback: str = "Профиль",
+    keep_base: bool = False,
+) -> str:
+    """«Имя (marker)», «Имя (marker 2)»… — first spelling not already taken.
+
+    A marker already present in the name is stripped first, so copying a copy
+    yields «Имя (копия 2)» rather than «Имя (копия) (копия)». With ``keep_base``
+    the name itself is used when free — import wants that, cloning does not.
+    """
+    base = re.sub(rf"\s*\({re.escape(marker)}(?:\s+\d+)?\)$", "", name).strip() or fallback
+    if keep_base and base not in taken:
+        return base[:120]
+    candidate = f"{base} ({marker})"
     index = 2
     while candidate in taken:
-        candidate = f"{base} (копия {index})"
+        candidate = f"{base} ({marker} {index})"
         index += 1
     return candidate[:120]
 
@@ -365,6 +380,32 @@ def validate_profile_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: Columns written from a validated payload — the keys `validate_profile_payload`
+#: returns, in one place so INSERT and UPDATE can never drift apart.
+_PAYLOAD_COLUMNS = (
+    "name",
+    "upstream_url",
+    "enabled",
+    "hwid_mode",
+    "hwid",
+    "device_os",
+    "device_ver",
+    "device_model",
+    "filter_json",
+    "protocols_json",
+    "output_format",
+    "upstream_ua",
+    "cache_ttl",
+)
+
+
+def _payload_values(fields: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(
+        int(fields[column]) if column == "enabled" else fields[column]
+        for column in _PAYLOAD_COLUMNS
+    )
+
+
 class ProfileRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -394,31 +435,9 @@ class ProfileRepository:
         if self.db.query_one("SELECT 1 FROM profiles WHERE token = ?", (token,)) is not None:
             token = new_token()
         cursor = self.db.execute(
-            """
-            INSERT INTO profiles(
-                name, token, upstream_url, enabled, hwid_mode, hwid,
-                device_os, device_ver, device_model, filter_json, protocols_json,
-                output_format, upstream_ua, cache_ttl, created_at, updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                fields["name"],
-                token,
-                fields["upstream_url"],
-                int(fields["enabled"]),
-                fields["hwid_mode"],
-                fields["hwid"],
-                fields["device_os"],
-                fields["device_ver"],
-                fields["device_model"],
-                fields["filter_json"],
-                fields["protocols_json"],
-                fields["output_format"],
-                fields["upstream_ua"],
-                fields["cache_ttl"],
-                now,
-                now,
-            ),
+            f"INSERT INTO profiles({', '.join(_PAYLOAD_COLUMNS)}, token, created_at, updated_at) "
+            f"VALUES({','.join('?' * (len(_PAYLOAD_COLUMNS) + 3))})",
+            (*_payload_values(fields), token, now, now),
         )
         created = self.get(int(cursor.lastrowid or 0))
         if created is None:  # pragma: no cover - only on a storage failure
@@ -430,31 +449,10 @@ class ProfileRepository:
         if existing is None:
             raise ProfileError("профиль не найден")
         fields = validate_profile_payload(payload)
+        assignments = ", ".join(f"{column}=?" for column in _PAYLOAD_COLUMNS)
         self.db.execute(
-            """
-            UPDATE profiles SET
-                name=?, upstream_url=?, enabled=?, hwid_mode=?, hwid=?,
-                device_os=?, device_ver=?, device_model=?, filter_json=?, protocols_json=?,
-                output_format=?, upstream_ua=?, cache_ttl=?, updated_at=?
-            WHERE id=?
-            """,
-            (
-                fields["name"],
-                fields["upstream_url"],
-                int(fields["enabled"]),
-                fields["hwid_mode"],
-                fields["hwid"],
-                fields["device_os"],
-                fields["device_ver"],
-                fields["device_model"],
-                fields["filter_json"],
-                fields["protocols_json"],
-                fields["output_format"],
-                fields["upstream_ua"],
-                fields["cache_ttl"],
-                int(time.time()),
-                profile_id,
-            ),
+            f"UPDATE profiles SET {assignments}, updated_at=? WHERE id=?",
+            (*_payload_values(fields), int(time.time()), profile_id),
         )
         updated = self.get(profile_id)
         assert updated is not None
@@ -498,7 +496,7 @@ class ProfileRepository:
         if source is None:
             raise ProfileError("профиль не найден")
         payload = source.as_dict()
-        payload["name"] = _unique_copy_name(source.name, {p.name for p in self.list()})
+        payload["name"] = unique_name(source.name, {p.name for p in self.list()}, marker="копия")
         payload.pop("token", None)
         return self.create(payload)
 

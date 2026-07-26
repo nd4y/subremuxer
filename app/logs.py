@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 from .db import Database
@@ -34,6 +34,17 @@ class RequestLogEntry:
     error: str | None = None
 
 
+#: The entry's fields are named after the table's columns on purpose: the INSERT
+#: below is derived from the dataclass, so adding a field is a two-place change
+#: (here and in the schema) instead of four.
+_LOG_COLUMNS = tuple(item.name for item in fields(RequestLogEntry))
+
+_INSERT_LOG = (
+    f"INSERT INTO request_logs({', '.join(_LOG_COLUMNS)}) "
+    f"VALUES({','.join('?' * len(_LOG_COLUMNS))})"
+)
+
+
 class LogRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -41,36 +52,7 @@ class LogRepository:
     def record(self, entry: RequestLogEntry, decisions: list[Decision] | None = None) -> int:
         with self.db.tx() as conn:
             cursor = conn.execute(
-                """
-                INSERT INTO request_logs(
-                    profile_id, profile_name, ts, client_ip, user_agent, request_path,
-                    hwid_in, hwid_sent, hwid_action, upstream_url, upstream_status,
-                    upstream_ms, detected_format, output_format, nodes_total, nodes_kept,
-                    bytes_in, bytes_out, status_code, error
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    entry.profile_id,
-                    entry.profile_name,
-                    entry.ts,
-                    entry.client_ip,
-                    entry.user_agent,
-                    entry.request_path,
-                    entry.hwid_in,
-                    entry.hwid_sent,
-                    entry.hwid_action,
-                    entry.upstream_url,
-                    entry.upstream_status,
-                    entry.upstream_ms,
-                    entry.detected_format,
-                    entry.output_format,
-                    entry.nodes_total,
-                    entry.nodes_kept,
-                    entry.bytes_in,
-                    entry.bytes_out,
-                    entry.status_code,
-                    entry.error,
-                ),
+                _INSERT_LOG, tuple(getattr(entry, name) for name in _LOG_COLUMNS)
             )
             log_id = int(cursor.lastrowid or 0)
             if decisions:

@@ -267,9 +267,6 @@ class Database:
             return None
         return row
 
-    def session_valid(self, token: str) -> bool:
-        return self.get_session(token) is not None
-
     def delete_session(self, token: str) -> None:
         self.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
