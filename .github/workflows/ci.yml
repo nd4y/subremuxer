@@ -165,9 +165,16 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8002/healthz | grep -q '"ok"'
-          # The app must not be running as root once it is up.
-          test "$(docker exec subremuxer-vol id -u)" = "10001"
+
+          # The app must not still be root once it is up. `docker exec` would run
+          # as the image's user, so ask PID 1 itself instead.
+          uid=$(docker exec subremuxer-vol sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' /proc/1/status)
+          test "$uid" = "10001"
+
+          # And the database it created has to belong to that same user.
           sudo test -f /tmp/rootvol/subremuxer.db
+          test "$(sudo stat -c %u /tmp/rootvol/subremuxer.db)" = "10001"
+
           docker logs subremuxer-vol
           docker rm -f subremuxer-vol
 
