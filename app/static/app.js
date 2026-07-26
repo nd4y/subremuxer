@@ -2916,7 +2916,9 @@ function renderLoginMethods() {
       "Ни один способ входа не настроен. Проверьте переменные окружения приложения.";
     note.hidden = false;
   } else if (!password) {
-    note.textContent = "Вход по мастер-паролю отключён администратором.";
+    // Phrased about the installation rather than about "the administrator",
+    // who is quite often the person reading it.
+    note.textContent = "На этой установке вход возможен только через провайдера.";
     note.hidden = false;
   } else {
     note.hidden = true;
