@@ -31,7 +31,9 @@ COPY --chown=10001:10001 app /app/app
 
 WORKDIR /app
 USER 10001:10001
-VOLUME ["/data"]
+# No VOLUME declaration on purpose: it only creates an anonymous volume, every
+# deployment here mounts /data explicitly anyway, and Railway rejects a Dockerfile
+# that contains one outright ("docker VOLUME is not supported, use Railway Volumes").
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
