@@ -28,16 +28,24 @@ RUN groupadd --gid 10001 subremuxer \
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=10001:10001 app /app/app
+COPY docker-entrypoint.py /usr/local/bin/docker-entrypoint.py
+RUN chmod +x /usr/local/bin/docker-entrypoint.py
 
 WORKDIR /app
-USER 10001:10001
-# No VOLUME declaration on purpose: it only creates an anonymous volume, every
+# Deliberately no USER: the entrypoint starts as root only long enough to make a
+# root-owned volume writable, then drops to uid 10001 before exec'ing the app.
+# Declaring USER here would make that impossible on platforms that mount volumes
+# root-owned and give no way to change it.
+#
+# No VOLUME declaration either: it only creates an anonymous volume, every
 # deployment here mounts /data explicitly anyway, and Railway rejects a Dockerfile
 # that contains one outright ("docker VOLUME is not supported, use Railway Volumes").
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,urllib.request,sys; port=os.getenv('PORT','8000'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=4).status == 200 else 1)"
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.py"]
 
 # PORT is honoured because platforms like Railway assign one and route to it;
 # without this the app would listen on 8000 and never pass their health check.

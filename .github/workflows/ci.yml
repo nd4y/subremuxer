@@ -152,6 +152,25 @@ jobs:
           docker logs subremuxer-port
           docker rm -f subremuxer-port
 
+      - name: Start on a root-owned volume
+        run: |
+          # Hosted platforms mount volumes owned by root. The entrypoint has to
+          # take ownership and drop privileges, or SQLite cannot even be created.
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(git rev-parse --short HEAD)"
+          sudo mkdir -p /tmp/rootvol && sudo chown 0:0 /tmp/rootvol && sudo chmod 755 /tmp/rootvol
+          docker run -d --name subremuxer-vol -p 8002:8000 \
+            -e ADMIN_PASSWORD=ci-password -v /tmp/rootvol:/data "$IMAGE"
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8002/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8002/healthz | grep -q '"ok"'
+          # The app must not be running as root once it is up.
+          test "$(docker exec subremuxer-vol id -u)" = "10001"
+          sudo test -f /tmp/rootvol/subremuxer.db
+          docker logs subremuxer-vol
+          docker rm -f subremuxer-vol
+
       - name: Demo mode opens the admin API and says so
         run: |
           IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(git rev-parse --short HEAD)"
