@@ -43,6 +43,11 @@ const icons = {
 
 const HWID_RE = /^[a-zA-Z0-9=-]{10,64}$/;
 
+/** The <button class="icon-btn"> pattern repeated across cards and rows. */
+function iconButton({ icon, label, onclick, title }) {
+  return h("button", { class: "icon-btn", type: "button", html: icon, "aria-label": label, title, onclick });
+}
+
 /* -------------------------------------------------------------------- api */
 
 class ApiError extends Error {
@@ -87,6 +92,32 @@ const api = {
   put: (path, body) => request("PUT", path, body),
   del: (path) => request("DELETE", path),
 };
+
+/**
+ * Runs `action`; on failure shows the server's error as a toast and returns
+ * undefined instead of throwing. For the many handlers where "show the error"
+ * is the entire failure path — the caller either uses the resolved value or,
+ * same as this returning undefined, does nothing further.
+ */
+async function attempt(action) {
+  try {
+    return await action();
+  } catch (error) {
+    toast(error.message, "error");
+    return undefined;
+  }
+}
+
+/** Like attempt(), for call sites that only care whether it worked. */
+async function attemptOk(action) {
+  try {
+    await action();
+    return true;
+  } catch (error) {
+    toast(error.message, "error");
+    return false;
+  }
+}
 
 /* ------------------------------------------------------------------ state */
 
@@ -179,10 +210,21 @@ function dismissSnackbar() {
   const node = $("#snackbar");
   if (node.hidden) return;
   node.classList.add("is-closing");
-  setTimeout(() => {
+  // Tracked in the same snackbarTimer a following toast() clears — otherwise
+  // this 200ms close outlives a toast shown right after dismissing (an Undo
+  // action that itself fails and re-toasts an error, for one) and wipes it.
+  snackbarTimer = setTimeout(() => {
     node.hidden = true;
     node.replaceChildren();
   }, 200);
+}
+
+/**
+ * The delete-then-offer-Undo snackbar shared by profiles, templates and probe
+ * captures: the action already happened, `onUndo` is what reverses it.
+ */
+function undoToast(message, onUndo) {
+  toast(message, { duration: 7000, action: { label: "Отменить", onClick: () => attemptOk(onUndo) } });
 }
 
 function countdownRing(duration) {
@@ -374,6 +416,11 @@ function initSheetDrag() {
 
 /* ------------------------------------------------------------ form pieces */
 
+/** Every field control shares the same floating-label <label class="field"> shell. */
+function wrapField(control, label) {
+  return h("label", { class: "field" }, control, h("span", { class: "field__label", text: label }));
+}
+
 function field({ id, label, value = "", type = "text", inputmode, attrs = {} }) {
   const input = h("input", {
     class: "field__input",
@@ -387,13 +434,13 @@ function field({ id, label, value = "", type = "text", inputmode, attrs = {} }) 
     ...attrs,
   });
   input.value = value ?? "";
-  return h("label", { class: "field" }, input, h("span", { class: "field__label", text: label }));
+  return wrapField(input, label);
 }
 
 function textareaField({ id, label, value = "", rows = 2 }) {
   const area = h("textarea", { class: "field__textarea", id, rows, placeholder: " " });
   area.value = value ?? "";
-  return h("label", { class: "field" }, area, h("span", { class: "field__label", text: label }));
+  return wrapField(area, label);
 }
 
 function selectField({ id, label, value, options }) {
@@ -403,7 +450,7 @@ function selectField({ id, label, value, options }) {
     options.map((option) => h("option", { value: option.value }, option.label))
   );
   select.value = value;
-  return h("label", { class: "field" }, select, h("span", { class: "field__label", text: label }));
+  return wrapField(select, label);
 }
 
 function segmented({ value, options, onChange }) {
@@ -666,13 +713,7 @@ function buildConfigForm(draft, { idPrefix = "cfg" } = {}) {
     regexPreview.className = "regex-preview";
     regexPreview.append(
       h("code", { text: regex }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.copy,
-        "aria-label": "Скопировать регулярку",
-        onclick: () => copyToClipboard(regex),
-      })
+      iconButton({ icon: icons.copy, label: "Скопировать регулярку", onclick: () => copyToClipboard(regex) })
     );
   }
 
@@ -698,11 +739,9 @@ function buildConfigForm(draft, { idPrefix = "cfg" } = {}) {
       "div",
       { class: "condition" },
       h("div", { class: "condition__fields" }, opSelect, valueField),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.trash,
-        "aria-label": "Удалить условие",
+      iconButton({
+        icon: icons.trash,
+        label: "Удалить условие",
         onclick: () => {
           draft.filter.conditions.splice(index, 1);
           renderConditions();
@@ -1004,24 +1043,13 @@ function viewerProfileCard(profile) {
           text: profile.enabled ? "Подписка активна" : "Подписка выключена",
         })
       ),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.qr,
-        "aria-label": "Ссылка и QR-код",
-        onclick: () => showLinkSheet(profile),
-      })
+      iconButton({ icon: icons.qr, label: "Ссылка и QR-код", onclick: () => showLinkSheet(profile) })
     ),
     h(
       "div",
       { class: "profile__link", onclick: () => copyToClipboard(profile.subscription_url) },
       h("span", { text: profile.subscription_url }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.copy,
-        "aria-label": "Скопировать ссылку",
-      })
+      iconButton({ icon: icons.copy, label: "Скопировать ссылку" })
     ),
     h(
       "div",
@@ -1067,25 +1095,14 @@ function profileCard(profile) {
         h("h2", { class: "profile__name", text: profile.name }),
         h("span", { class: "profile__upstream", text: hostOf(profile.upstream_url) })
       ),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.qr,
-        "aria-label": "Ссылка и QR-код",
-        onclick: () => showLinkSheet(profile),
-      })
+      iconButton({ icon: icons.qr, label: "Ссылка и QR-код", onclick: () => showLinkSheet(profile) })
     ),
     h("div", { class: "profile__badges" }, badges),
     h(
       "div",
       { class: "profile__link", onclick: () => copyToClipboard(profile.subscription_url) },
       h("span", { text: profile.subscription_url }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.copy,
-        "aria-label": "Скопировать ссылку",
-      })
+      iconButton({ icon: icons.copy, label: "Скопировать ссылку" })
     ),
     h(
       "div",
@@ -1103,27 +1120,21 @@ function profileCard(profile) {
         onclick: () => showProfileEditor(profile, { runTest: true }),
       }),
       h("span", { class: "spacer" }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.clone,
-        "aria-label": "Клонировать профиль",
+      iconButton({
+        icon: icons.clone,
+        label: "Клонировать профиль",
         title: "Клонировать",
         onclick: () => cloneProfile(profile),
       }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.bookmark,
-        "aria-label": "Сохранить как шаблон",
+      iconButton({
+        icon: icons.bookmark,
+        label: "Сохранить как шаблон",
         title: "Сохранить как шаблон",
         onclick: () => saveProfileAsTemplate(profile),
       }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.trash,
-        "aria-label": "Удалить профиль",
+      iconButton({
+        icon: icons.trash,
+        label: "Удалить профиль",
         title: "Удалить",
         onclick: () => deleteProfile(profile),
       })
@@ -1132,16 +1143,14 @@ function profileCard(profile) {
 }
 
 async function cloneProfile(profile) {
-  try {
+  await attempt(async () => {
     const clone = await api.post(`/api/profiles/${profile.id}/clone`);
     await loadProfiles();
     toast(`Создана копия «${clone.name}»`, {
       action: { label: "Настроить", onClick: () => showProfileEditor(clone) },
       duration: 6000,
     });
-  } catch (error) {
-    toast(error.message, "error");
-  }
+  });
 }
 
 /**
@@ -1149,28 +1158,13 @@ async function cloneProfile(profile) {
  * guidance is to just do it and offer Undo while a ring counts down.
  */
 async function deleteProfile(profile) {
-  try {
-    await api.del(`/api/profiles/${profile.id}`);
-  } catch (error) {
-    toast(error.message, "error");
-    return;
-  }
+  if (!(await attemptOk(() => api.del(`/api/profiles/${profile.id}`)))) return;
   state.profiles = state.profiles.filter((item) => item.id !== profile.id);
   renderProfiles();
-  toast(`Профиль «${profile.name}» удалён`, {
-    duration: 7000,
-    action: {
-      label: "Отменить",
-      onClick: async () => {
-        try {
-          await api.post(`/api/profiles/${profile.id}/restore`);
-          await loadProfiles();
-          toast(`Профиль «${profile.name}» восстановлен`);
-        } catch (error) {
-          toast(error.message, "error");
-        }
-      },
-    },
+  undoToast(`Профиль «${profile.name}» удалён`, async () => {
+    await api.post(`/api/profiles/${profile.id}/restore`);
+    await loadProfiles();
+    toast(`Профиль «${profile.name}» восстановлен`);
   });
 }
 
@@ -1198,8 +1192,8 @@ function saveProfileAsTemplate(profile) {
         class: "btn btn--filled",
         type: "button",
         text: "Сохранить",
-        onclick: async () => {
-          try {
+        onclick: () =>
+          attemptOk(async () => {
             await api.post(`/api/templates/from-profile/${profile.id}`, {
               name: $("input", nameField).value,
               description: $("textarea", descField).value,
@@ -1207,10 +1201,7 @@ function saveProfileAsTemplate(profile) {
             closeSheet();
             await loadTemplates();
             toast("Шаблон сохранён");
-          } catch (error) {
-            toast(error.message, "error");
-          }
-        },
+          }),
       }),
     ],
   });
@@ -1516,16 +1507,13 @@ function showLinkSheet(profile) {
           class: "btn btn--outlined btn--danger",
           type: "button",
           text: "Сменить токен",
-          onclick: async () => {
-            try {
+          onclick: () =>
+            attemptOk(async () => {
               await api.post(`/api/profiles/${profile.id}/rotate-token`);
               closeSheet();
               await loadProfiles();
               toast("Токен обновлён");
-            } catch (error) {
-              toast(error.message, "error");
-            }
-          },
+            }),
         })
       ),
     ],
@@ -1544,7 +1532,7 @@ function showLinkSheet(profile) {
 /* ----------------------------------------------------------- export/import */
 
 async function downloadExport(path, filename) {
-  try {
+  await attemptOk(async () => {
     const response = await fetch(path, { credentials: "same-origin" });
     if (!response.ok) throw new ApiError("Не удалось выгрузить конфигурацию", response.status);
     const blob = await response.blob();
@@ -1556,9 +1544,7 @@ async function downloadExport(path, filename) {
     // Revoking immediately can cancel the download in some browsers.
     setTimeout(() => URL.revokeObjectURL(href), 10000);
     toast(`Файл ${filename} сохранён`);
-  } catch (error) {
-    toast(error.message, "error");
-  }
+  });
 }
 
 /* ------------------------------------------------------------ code editor */
@@ -1686,13 +1672,8 @@ function codeEditor({ value = "", language = "yaml" } = {}) {
 
 async function showConfigEditor() {
   let format = "yaml";
-  let loaded;
-  try {
-    loaded = await api.get(`/api/config?format=${format}`);
-  } catch (error) {
-    toast(error.message, "error");
-    return;
-  }
+  const loaded = await attempt(() => api.get(`/api/config?format=${format}`));
+  if (!loaded) return;
 
   const editor = codeEditor({ value: loaded.content, language: format });
   const status = h("div", { class: "editor-status" });
@@ -1923,12 +1904,12 @@ function showImportSheet() {
         class: "btn btn--filled",
         type: "button",
         text: "Импортировать",
-        onclick: async () => {
+        onclick: () => {
           if (!areaNode.value.trim()) {
             toast("Выберите файл или вставьте содержимое", "error");
             return;
           }
-          try {
+          attemptOk(async () => {
             const result = await api.post("/api/import", {
               content: areaNode.value,
               keep_tokens: keepTokens,
@@ -1944,9 +1925,7 @@ function showImportSheet() {
             if (result.errors.length) {
               setTimeout(() => toast(result.errors[0], "error"), 800);
             }
-          } catch (error) {
-            toast(error.message, "error");
-          }
+          });
         },
       }),
     ],
@@ -2130,16 +2109,14 @@ function showProfileEditor(existing, { runTest = false, template = null, blank =
   }
 
   async function save() {
-    try {
+    await attemptOk(async () => {
       const payload = collect();
       if (draft.id) await api.put(`/api/profiles/${draft.id}`, payload);
       else await api.post("/api/profiles", payload);
       closeSheet();
       await loadProfiles();
       toast(draft.id ? "Профиль сохранён" : "Профиль создан");
-    } catch (error) {
-      toast(error.message, "error");
-    }
+    });
   }
 
   openSheet({
@@ -2173,15 +2150,13 @@ function showTemplateEditor(existing) {
       description: $("textarea", descField).value,
       payload: form.collect(),
     };
-    try {
+    await attemptOk(async () => {
       if (existing) await api.put(`/api/templates/${existing.id}`, payload);
       else await api.post("/api/templates", payload);
       closeSheet();
       await loadTemplates();
       toast(existing ? "Шаблон сохранён" : "Шаблон создан");
-    } catch (error) {
-      toast(error.message, "error");
-    }
+    });
   }
 
   openSheet({
@@ -2222,20 +2197,8 @@ function renderTemplates() {
             : null,
           h("span", { class: "template-row__badges" }, templateBadges(template))
         ),
-        h("button", {
-          class: "icon-btn",
-          type: "button",
-          html: icons.edit,
-          "aria-label": "Редактировать шаблон",
-          onclick: () => showTemplateEditor(template),
-        }),
-        h("button", {
-          class: "icon-btn",
-          type: "button",
-          html: icons.trash,
-          "aria-label": "Удалить шаблон",
-          onclick: () => deleteTemplate(template),
-        })
+        iconButton({ icon: icons.edit, label: "Редактировать шаблон", onclick: () => showTemplateEditor(template) }),
+        iconButton({ icon: icons.trash, label: "Удалить шаблон", onclick: () => deleteTemplate(template) })
       )
     )
   );
@@ -2243,32 +2206,17 @@ function renderTemplates() {
 
 async function deleteTemplate(template) {
   const snapshot = { ...template };
-  try {
-    await api.del(`/api/templates/${template.id}`);
-  } catch (error) {
-    toast(error.message, "error");
-    return;
-  }
+  if (!(await attemptOk(() => api.del(`/api/templates/${template.id}`)))) return;
   state.templates = state.templates.filter((item) => item.id !== template.id);
   renderTemplates();
-  toast(`Шаблон «${template.name}» удалён`, {
-    duration: 7000,
-    action: {
-      label: "Отменить",
-      onClick: async () => {
-        try {
-          await api.post("/api/templates", {
-            name: snapshot.name,
-            description: snapshot.description,
-            payload: snapshot.payload,
-          });
-          await loadTemplates();
-          toast("Шаблон восстановлен");
-        } catch (error) {
-          toast(error.message, "error");
-        }
-      },
-    },
+  undoToast(`Шаблон «${template.name}» удалён`, async () => {
+    await api.post("/api/templates", {
+      name: snapshot.name,
+      description: snapshot.description,
+      payload: snapshot.payload,
+    });
+    await loadTemplates();
+    toast("Шаблон восстановлен");
   });
 }
 
@@ -2338,11 +2286,9 @@ function captureCard(capture) {
         },
       }),
       h("span", { class: "spacer" }),
-      h("button", {
-        class: "icon-btn",
-        type: "button",
-        html: icons.trash,
-        "aria-label": "Удалить захват",
+      iconButton({
+        icon: icons.trash,
+        label: "Удалить захват",
         onclick: () =>
           deleteCaptures([capture], {
             message: `Захват «${capture.device_model || capture.user_agent || "устройство"}» удалён`,
@@ -2360,12 +2306,7 @@ function captureCard(capture) {
  */
 async function deleteCaptures(rows, { message, request }) {
   const snapshot = JSON.parse(JSON.stringify(rows));
-  try {
-    await request();
-  } catch (error) {
-    toast(error.message, "error");
-    return;
-  }
+  if (!(await attemptOk(request))) return;
 
   const removed = new Set(snapshot.map((item) => item.id));
   if (state.probe) {
@@ -2373,24 +2314,14 @@ async function deleteCaptures(rows, { message, request }) {
     renderProbe();
   }
 
-  toast(message, {
-    duration: 7000,
-    action: {
-      label: "Отменить",
-      onClick: async () => {
-        try {
-          const result = await api.post("/api/probe/captures/restore", { captures: snapshot });
-          await loadProbe();
-          toast(
-            result.restored === snapshot.length
-              ? "Восстановлено"
-              : `Восстановлено ${result.restored} из ${snapshot.length} — остальные успели появиться заново`
-          );
-        } catch (error) {
-          toast(error.message, "error");
-        }
-      },
-    },
+  undoToast(message, async () => {
+    const result = await api.post("/api/probe/captures/restore", { captures: snapshot });
+    await loadProbe();
+    toast(
+      result.restored === snapshot.length
+        ? "Восстановлено"
+        : `Восстановлено ${result.restored} из ${snapshot.length} — остальные успели появиться заново`
+    );
   });
 }
 
@@ -2611,7 +2542,7 @@ function refreshDefaultHwidHint() {
 }
 
 async function saveSettings() {
-  try {
+  await attemptOk(async () => {
     state.settings = await api.put("/api/settings", {
       default_hwid: $("#default-hwid").value.trim(),
       default_device_os: $("#default-device-os").value.trim(),
@@ -2620,9 +2551,7 @@ async function saveSettings() {
     });
     toast("Настройки сохранены");
     refreshDefaultHwidHint();
-  } catch (error) {
-    toast(error.message, "error");
-  }
+  });
 }
 
 /* ------------------------------------------------------------------ help */
@@ -3023,27 +2952,23 @@ async function boot() {
     downloadExport("/api/export?format=json", "subremuxer-config.json")
   );
 
-  $("#templates-restore").addEventListener("click", async () => {
-    try {
+  $("#templates-restore").addEventListener("click", () =>
+    attemptOk(async () => {
       await api.post("/api/templates/restore-builtins");
       await loadTemplates();
       toast("Встроенные шаблоны восстановлены");
-    } catch (error) {
-      toast(error.message, "error");
-    }
-  });
+    })
+  );
 
   $("#probe-copy").addEventListener("click", () => copyToClipboard(state.probe?.url || ""));
 
-  $("#probe-rotate").addEventListener("click", async () => {
+  $("#probe-rotate").addEventListener("click", () => {
     if (!window.confirm("Сменить ссылку для захвата? Старая перестанет работать.")) return;
-    try {
+    attemptOk(async () => {
       await api.post("/api/probe/rotate");
       await loadProbe();
       toast("Ссылка обновлена");
-    } catch (error) {
-      toast(error.message, "error");
-    }
+    });
   });
 
   $("#probe-clear").addEventListener("click", () => {
@@ -3073,16 +2998,14 @@ async function boot() {
     loadLogs();
   });
 
-  $("#logs-clear").addEventListener("click", async () => {
+  $("#logs-clear").addEventListener("click", () => {
     if (!window.confirm("Удалить все записи журнала?")) return;
-    try {
+    attemptOk(async () => {
       await api.del("/api/logs");
       state.logNodeCache.clear();
       toast("Журнал очищен");
       await loadLogs();
-    } catch (error) {
-      toast(error.message, "error");
-    }
+    });
   });
 
   for (const id of ["topbar-logout", "settings-logout"]) {

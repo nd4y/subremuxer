@@ -1,0 +1,12 @@
+{
+  "name": "subremuxer-frontend-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0",
+    "vitest": "^2.1.0"
+  }
+}
