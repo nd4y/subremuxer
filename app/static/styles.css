@@ -518,6 +518,26 @@ body.is-viewer .snackbar {
   white-space: nowrap;
 }
 
+/* Five destinations no longer fit a narrow phone at the default sizes, and a
+   clipped label is worse than a slightly smaller one. */
+@media (max-width: 420px) {
+  .navbar {
+    gap: 0;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  .navbar__pill {
+    width: 100%;
+    max-width: 56px;
+  }
+
+  .navbar__label {
+    font-size: 0.66rem;
+    letter-spacing: 0;
+  }
+}
+
 .navbar__item.is-active {
   color: var(--on-secondary-container);
 }
@@ -1413,6 +1433,56 @@ body.is-viewer .snackbar {
 .condition__fields {
   display: grid;
   gap: 8px;
+}
+
+/* ------------------------------------------------------- aggregate sources */
+
+.sources {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.source {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--shape-l);
+  background: var(--surface-container);
+  animation: rise var(--dur-medium) var(--ease-spring) both;
+}
+
+.source__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source__index {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-container-highest);
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--on-surface-variant);
+}
+
+.source__name {
+  min-width: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.source__name--missing {
+  color: var(--error);
+  font-weight: 500;
 }
 
 .regex-preview {

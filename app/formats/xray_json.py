@@ -19,7 +19,7 @@ from typing import Any
 from .base import NON_NODE_KINDS, Node, ParsedSubscription, SubFormat, canonical_protocol
 
 
-def _is_node_outbound(outbound: Any) -> bool:
+def is_node_outbound(outbound: Any) -> bool:
     if not isinstance(outbound, dict):
         return False
     protocol = canonical_protocol(str(outbound.get("protocol", "")))
@@ -68,7 +68,7 @@ class XrayConfigListSubscription(ParsedSubscription):
             outbounds = config.get("outbounds")
             proxy = None
             if isinstance(outbounds, list):
-                proxy = next((ob for ob in outbounds if _is_node_outbound(ob)), None)
+                proxy = next((ob for ob in outbounds if is_node_outbound(ob)), None)
             if isinstance(proxy, dict):
                 node = _outbound_node(len(nodes), proxy)
             else:
@@ -86,6 +86,10 @@ class XrayConfigListSubscription(ParsedSubscription):
         }
         result = [cfg for pos, cfg in enumerate(self._configs) if pos in kept_positions]
         return json.dumps(result, ensure_ascii=False, indent=2)
+
+    def node_config(self, index: int) -> dict[str, Any]:
+        """The whole config behind a node, as it arrived. Used when merging sources."""
+        return self._configs[self._node_positions[index]]
 
     def content_type(self) -> str:
         return "application/json; charset=utf-8"
@@ -118,7 +122,7 @@ class XrayConfigSubscription(ParsedSubscription):
         nodes: list[Node] = []
         positions: list[int] = []
         for position, outbound in enumerate(outbounds):
-            if not _is_node_outbound(outbound):
+            if not is_node_outbound(outbound):
                 continue
             nodes.append(_outbound_node(len(nodes), outbound))
             positions.append(position)
@@ -142,14 +146,28 @@ class XrayConfigSubscription(ParsedSubscription):
             if pos < len(original) and isinstance(original[pos], dict) and original[pos].get("tag")
         }
         doc["outbounds"] = [ob for pos, ob in enumerate(original) if pos not in drop_positions]
-        _prune_routing(doc, removed_tags)
+        prune_routing(doc, removed_tags)
         return json.dumps(doc, ensure_ascii=False, indent=2)
 
     def content_type(self) -> str:
         return "application/json; charset=utf-8"
 
+    @property
+    def document(self) -> dict[str, Any] | list[Any]:
+        """The parsed document itself — the skeleton a merge builds on."""
+        return self._doc
 
-def _prune_routing(doc: dict[str, Any], removed_tags: set[str]) -> None:
+    @property
+    def bare_outbounds(self) -> bool:
+        """True when the document is a naked ``outbounds`` array, not a config."""
+        return self._bare
+
+    def node_outbound(self, index: int) -> dict[str, Any]:
+        outbounds = self._doc if self._bare else self._doc.get("outbounds", [])  # type: ignore[union-attr]
+        return outbounds[self._node_positions[index]]
+
+
+def prune_routing(doc: dict[str, Any], removed_tags: set[str]) -> None:
     """Drop routing rules that point at outbounds which no longer exist."""
     if not removed_tags:
         return

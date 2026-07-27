@@ -8,7 +8,7 @@ import binascii
 import json
 import re
 from collections.abc import Collection
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from .base import Node, ParsedSubscription, SubFormat, canonical_protocol
 
@@ -54,6 +54,33 @@ def _vmess_name(uri: str) -> str | None:
         return None
     label = data.get("ps") or data.get("remarks") or data.get("remark")
     return str(label) if label else None
+
+
+def rename_uri(uri: str, name: str) -> str:
+    """Relabel a URI. vmess:// hides its label inside the payload, everyone else
+    uses the fragment."""
+    scheme = uri.split("://", 1)[0].lower()
+    if scheme == "vmess":
+        renamed = _rename_vmess(uri, name)
+        if renamed is not None:
+            return renamed
+    return f"{uri.split('#', 1)[0]}#{quote(name, safe='')}"
+
+
+def _rename_vmess(uri: str, name: str) -> str | None:
+    payload = uri[len("vmess://") :].split("#", 1)[0]
+    decoded = decode_base64(payload)
+    if decoded is None:
+        return None
+    try:
+        data = json.loads(decoded)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    data["ps"] = name
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return "vmess://" + base64.b64encode(body).decode("ascii")
 
 
 def _host_port(uri: str) -> tuple[str | None, int | None]:
@@ -133,6 +160,10 @@ class UriListSubscription(ParsedSubscription):
             base64_encoded=base64_encoded,
             trailing_newline=trailing_newline,
         )
+
+    def node_uri(self, index: int) -> str:
+        """The original line behind a node, verbatim. Used when merging sources."""
+        return self._lines[self._node_line_index[index]].strip()
 
     def set_base64(self, enabled: bool) -> None:
         """Switch the envelope. Base64 and plain text carry the same document."""

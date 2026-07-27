@@ -80,6 +80,14 @@ class ClashSubscription(ParsedSubscription):
     def content_type(self) -> str:
         return "text/yaml; charset=utf-8"
 
+    @property
+    def document(self) -> dict[str, Any]:
+        """The parsed document itself — the skeleton a merge builds on."""
+        return self._doc
+
+    def node_proxy(self, index: int) -> dict[str, Any]:
+        return self._doc["proxies"][self._node_positions[index]]
+
 
 def _deep_copy(doc: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(doc)

@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import APP_NAME
+from .aggregates import AggregateRepository
 from .config import Settings, get_settings
 from .db import Database
 from .oidc import OIDCError, OIDCProvider
@@ -119,6 +120,7 @@ async def _maintenance_loop(app: FastAPI) -> None:
             db.purge_sessions()
             db.prune_logs(settings.log_retention_days, settings.log_max_rows)
             ProfileRepository(db).purge_deleted(DELETED_PROFILE_GRACE_SECONDS)
+            AggregateRepository(db).purge_deleted(DELETED_PROFILE_GRACE_SECONDS)
         except asyncio.CancelledError:
             raise
         except Exception:  # pragma: no cover - maintenance must never kill the app
@@ -142,6 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.db.purge_sessions()
         app.state.db.prune_logs(settings.log_retention_days, settings.log_max_rows)
         ProfileRepository(app.state.db).purge_deleted(DELETED_PROFILE_GRACE_SECONDS)
+        AggregateRepository(app.state.db).purge_deleted(DELETED_PROFILE_GRACE_SECONDS)
         seeded = TemplateRepository(app.state.db).seed_builtins()
         if seeded:
             logger.info("добавлено встроенных шаблонов: %s", seeded)

@@ -76,13 +76,15 @@ describe("applyRoleToChrome", () => {
     expect(document.getElementById("fab-add").hidden).toBe(false);
   });
 
-  it("a viewer only keeps the profiles route, and the FAB is hidden", () => {
+  it("a viewer keeps only the pages holding links to hand out, and no FAB", () => {
     app.state.role = "viewer";
     app.state.user = "Читатель";
     app.applyRoleToChrome();
     expect(document.body.classList.contains("is-viewer")).toBe(true);
-    const nonProfileRoutes = app.$$("[data-route]").filter((item) => item.dataset.route !== "profiles");
-    expect(nonProfileRoutes.every((item) => item.hidden)).toBe(true);
+    const visible = app.$$("[data-route]").filter((item) => !item.hidden);
+    expect(new Set(visible.map((item) => item.dataset.route))).toEqual(
+      new Set(["profiles", "aggregates"])
+    );
     expect(document.getElementById("fab-add").hidden).toBe(true);
   });
 

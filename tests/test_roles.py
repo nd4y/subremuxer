@@ -109,6 +109,43 @@ def test_a_viewer_cannot_change_anything(viewer, seeded):
         assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
 
 
+@pytest.fixture()
+def with_aggregate(seeded):
+    admin, profile = seeded
+    created = admin.post(
+        "/api/aggregates",
+        json={"name": "Сборка", "sources": [{"profile_id": profile["id"], "prefix": "M"}]},
+    )
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+def test_a_viewer_gets_an_aggregate_link_but_not_its_parts(viewer, with_aggregate):
+    """A viewer hands out the link; which panels stand behind it is not theirs."""
+    listed = viewer.get("/api/aggregates")
+    assert listed.status_code == 200
+    body = listed.json()
+    assert len(body) == 1
+    assert body[0]["subscription_url"] == with_aggregate["subscription_url"]
+    assert set(body[0]) == {"id", "name", "enabled", "subscription_url", "updated_at"}
+    assert "secret-token" not in listed.text
+
+
+def test_a_viewer_cannot_change_an_aggregate(viewer, with_aggregate):
+    aggregate_id = with_aggregate["id"]
+    forbidden = (
+        ("post", "/api/aggregates"),
+        ("put", f"/api/aggregates/{aggregate_id}"),
+        ("delete", f"/api/aggregates/{aggregate_id}"),
+        ("post", f"/api/aggregates/{aggregate_id}/rotate-token"),
+        ("post", f"/api/aggregates/{aggregate_id}/restore"),
+    )
+    for method, path in forbidden:
+        call = getattr(viewer, method)
+        response = call(path) if method == "delete" else call(path, json={})
+        assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
+
+
 def test_a_viewer_sees_nothing_beyond_profiles(viewer):
     for path in ADMIN_ONLY_READS:
         assert viewer.get(path).status_code == 403, path

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .aggregates import Aggregate
 from .filtering import CompiledFilter, Decision, apply_filter
 from .formats import (
     FORMAT_LABELS,
@@ -14,6 +17,7 @@ from .formats import (
     UnknownFormatError,
     detect_and_parse,
 )
+from .formats.merge import MergePart, merge
 from .formats.uri_list import UriListSubscription
 from .logs import RequestLogEntry
 from .profiles import Profile
@@ -125,7 +129,26 @@ def _apply_encoding_override(parsed: ParsedSubscription, output_format: str) -> 
         parsed.set_base64(False)
 
 
-async def proxy_subscription(
+@dataclass(slots=True)
+class SourceResult:
+    """One profile fetched, parsed and filtered — the step both paths share.
+
+    ``parsed`` is None when nothing filterable came back. The raw fields then
+    hold what should be handed to the client instead: an upstream error, the
+    panel's own 4xx page, or a body in a format this app does not know.
+    """
+
+    entry: RequestLogEntry
+    headers: dict[str, str] = field(default_factory=dict)
+    parsed: ParsedSubscription | None = None
+    keep: list[int] = field(default_factory=list)
+    decisions: list[Decision] = field(default_factory=list)
+    raw_body: str = ""
+    raw_content_type: str = "text/plain; charset=utf-8"
+    raw_status: int = 502
+
+
+async def fetch_and_filter(
     *,
     profile: Profile,
     defaults: Defaults,
@@ -134,7 +157,8 @@ async def proxy_subscription(
     client_headers: dict[str, str],
     client_ip: str | None,
     request_path: str | None,
-) -> ProxyResult:
+) -> SourceResult:
+    """Fetch one profile's upstream and apply its filter. Never raises."""
     lowered = {k.lower(): v for k, v in client_headers.items()}
     request = build_request(profile, defaults, client_headers)
 
@@ -164,32 +188,25 @@ async def proxy_subscription(
         except UpstreamError as exc:
             entry.error = str(exc)
             entry.status_code = 502
-            return ProxyResult(
-                body=str(exc),
-                content_type="text/plain; charset=utf-8",
-                headers={},
-                status_code=502,
-                entry=entry,
-                passthrough=True,
-            )
+            return SourceResult(entry=entry, raw_body=str(exc), raw_status=502)
         cache.put(cache_key, result, profile.cache_ttl)
 
     entry.upstream_status = result.status_code
     entry.upstream_ms = 0 if cached else result.elapsed_ms
     entry.bytes_in = result.bytes_in
     headers = passthrough_response_headers(result.headers)
+    content_type = result.content_type or "text/plain; charset=utf-8"
 
     if result.status_code >= 400:
         entry.status_code = result.status_code
         entry.error = f"апстрим ответил {result.status_code}"
         entry.bytes_out = len(result.text.encode("utf-8"))
-        return ProxyResult(
-            body=result.text,
-            content_type=result.content_type or "text/plain; charset=utf-8",
-            headers=headers,
-            status_code=result.status_code,
+        return SourceResult(
             entry=entry,
-            passthrough=True,
+            headers=headers,
+            raw_body=result.text,
+            raw_content_type=content_type,
+            raw_status=result.status_code,
         )
 
     try:
@@ -202,36 +219,216 @@ async def proxy_subscription(
         entry.error = f"формат не распознан, отдан без изменений: {exc}"
         entry.status_code = result.status_code
         entry.bytes_out = len(result.text.encode("utf-8"))
-        return ProxyResult(
-            body=result.text,
-            content_type=result.content_type or "text/plain; charset=utf-8",
+        return SourceResult(
+            entry=entry,
             headers=headers,
-            status_code=result.status_code,
+            raw_body=result.text,
+            raw_content_type=content_type,
+            raw_status=result.status_code,
+        )
+
+    decisions = apply_filter(parsed.nodes, profile.compiled_filter())
+    keep = [decision.node.index for decision in decisions if decision.kept]
+
+    entry.detected_format = parsed.format.value
+    entry.nodes_total = len(decisions)
+    entry.nodes_kept = len(keep)
+    entry.status_code = 200
+
+    return SourceResult(
+        entry=entry, headers=headers, parsed=parsed, keep=keep, decisions=decisions
+    )
+
+
+async def proxy_subscription(
+    *,
+    profile: Profile,
+    defaults: Defaults,
+    fetcher: UpstreamFetcher,
+    cache: UpstreamCache,
+    client_headers: dict[str, str],
+    client_ip: str | None,
+    request_path: str | None,
+) -> ProxyResult:
+    source = await fetch_and_filter(
+        profile=profile,
+        defaults=defaults,
+        fetcher=fetcher,
+        cache=cache,
+        client_headers=client_headers,
+        client_ip=client_ip,
+        request_path=request_path,
+    )
+    entry = source.entry
+    if source.parsed is None:
+        return ProxyResult(
+            body=source.raw_body,
+            content_type=source.raw_content_type,
+            headers=source.headers,
+            status_code=source.raw_status,
             entry=entry,
             passthrough=True,
         )
 
-    compiled = profile.compiled_filter()
-    decisions = apply_filter(parsed.nodes, compiled)
-    keep = [decision.node.index for decision in decisions if decision.kept]
-
+    parsed = source.parsed
     _apply_encoding_override(parsed, profile.output_format)
-    body = parsed.render(keep)
+    body = parsed.render(source.keep)
 
-    entry.detected_format = parsed.format.value
     entry.output_format = _effective_output_format(parsed, profile.output_format).value
-    entry.nodes_total = len(decisions)
-    entry.nodes_kept = len(keep)
     entry.bytes_out = len(body.encode("utf-8"))
-    entry.status_code = 200
 
     return ProxyResult(
         body=body,
         content_type=parsed.content_type(),
-        headers=headers,
+        headers=source.headers,
         status_code=200,
         entry=entry,
-        decisions=decisions,
+        decisions=source.decisions,
+    )
+
+
+# ------------------------------------------------------------------ aggregates
+
+
+@dataclass(slots=True)
+class AggregateSourceRef:
+    """A profile taking part in an aggregate, with the label its nodes get."""
+
+    profile: Profile
+    prefix: str = ""
+
+
+def aggregate_refs(
+    aggregate: Aggregate, profiles: Mapping[int, Profile]
+) -> list[AggregateSourceRef]:
+    """Resolve an aggregate's sources, skipping ones that are gone or switched off.
+
+    A source with no prefix of its own borrows the profile's name, which is what
+    makes «включить подписи» useful straight away without typing anything.
+    """
+    refs: list[AggregateSourceRef] = []
+    for source in aggregate.sources:
+        profile = profiles.get(source.profile_id)
+        if profile is None or not profile.enabled:
+            continue
+        prefix = (source.prefix or profile.name) if aggregate.prefix_names else ""
+        refs.append(AggregateSourceRef(profile=profile, prefix=prefix))
+    return refs
+
+
+@dataclass(slots=True)
+class AggregateResult:
+    """What to answer with, plus every source's own log entry."""
+
+    proxy: ProxyResult
+    sources: list[SourceResult] = field(default_factory=list)
+
+
+async def proxy_aggregate(
+    *,
+    aggregate: Aggregate,
+    refs: Sequence[AggregateSourceRef],
+    defaults: Defaults,
+    fetcher: UpstreamFetcher,
+    cache: UpstreamCache,
+    client_headers: dict[str, str],
+    client_ip: str | None,
+    request_path: str | None,
+) -> AggregateResult:
+    """Serve several profiles as one subscription.
+
+    Sources are fetched concurrently — a client refreshing an aggregate of five
+    panels should wait for the slowest one, not for all five in turn.
+    """
+    lowered = {k.lower(): v for k, v in client_headers.items()}
+    entry = RequestLogEntry(
+        profile_name=aggregate.name,
+        client_ip=client_ip,
+        user_agent=lowered.get("user-agent"),
+        request_path=request_path,
+        upstream_url=f"сборка из {len(refs)} источников",
+    )
+
+    def failure(message: str) -> AggregateResult:
+        entry.error = message
+        entry.status_code = 502
+        entry.bytes_out = len(message.encode("utf-8"))
+        return AggregateResult(
+            proxy=ProxyResult(
+                body=message,
+                content_type="text/plain; charset=utf-8",
+                headers={},
+                status_code=502,
+                entry=entry,
+                passthrough=True,
+            )
+        )
+
+    if not refs:
+        return failure("в сборке нет включённых источников")
+
+    started = time.monotonic()
+    results = list(
+        await asyncio.gather(
+            *(
+                fetch_and_filter(
+                    profile=ref.profile,
+                    defaults=defaults,
+                    fetcher=fetcher,
+                    cache=cache,
+                    client_headers=client_headers,
+                    client_ip=client_ip,
+                    request_path=request_path,
+                )
+                for ref in refs
+            )
+        )
+    )
+
+    entry.bytes_in = sum(item.entry.bytes_in for item in results)
+    entry.upstream_ms = int((time.monotonic() - started) * 1000)
+
+    parts: list[MergePart] = []
+    problems: list[str] = []
+    for ref, source in zip(refs, results, strict=True):
+        if source.parsed is None:
+            problems.append(f"«{ref.profile.name}»: {source.entry.error or 'нет данных'}")
+            continue
+        parts.append(
+            MergePart(
+                parsed=source.parsed,
+                keep=source.keep,
+                prefix=ref.prefix,
+                label=ref.profile.name,
+            )
+        )
+
+    if not parts:
+        result = failure("ни один источник сборки не ответил: " + "; ".join(problems))
+        result.sources = results
+        return result
+
+    merged = merge(parts, dedupe=aggregate.dedupe, output_format=aggregate.output_format)
+    problems.extend(merged.skipped)
+
+    entry.upstream_status = 200
+    entry.detected_format = parts[0].parsed.format.value
+    entry.output_format = merged.format.value
+    entry.nodes_total = sum(item.entry.nodes_total for item in results)
+    entry.nodes_kept = merged.kept
+    entry.bytes_out = len(merged.body.encode("utf-8"))
+    entry.status_code = 200
+    entry.error = "; ".join(problems) or None
+
+    return AggregateResult(
+        proxy=ProxyResult(
+            body=merged.body,
+            content_type=merged.content_type,
+            headers={},
+            status_code=200,
+            entry=entry,
+        ),
+        sources=results,
     )
 
 

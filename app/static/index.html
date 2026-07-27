@@ -67,6 +67,12 @@
       </span>
       <span class="rail__label">Профили</span>
     </button>
+    <button class="rail__item" data-route="aggregates" type="button">
+      <span class="rail__icon">
+        <svg viewBox="0 0 24 24"><path d="M4 6h6M4 12h6M4 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M10 6h3a3 3 0 0 1 3 3v6a3 3 0 0 0 3 3h1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M10 12h3a3 3 0 0 0 3-3V9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+      </span>
+      <span class="rail__label">Сборки</span>
+    </button>
     <button class="rail__item" data-route="probe" type="button">
       <span class="rail__icon">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.6 19.4a10.5 10.5 0 0 1 0-14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -117,6 +123,10 @@
     <div class="page" id="page-profiles" data-page="profiles">
       <section class="stats" id="stats"></section>
       <div class="list" id="profiles-list"></div>
+    </div>
+
+    <div class="page" id="page-aggregates" data-page="aggregates" hidden>
+      <div class="list" id="aggregates-list"></div>
     </div>
 
     <div class="page" id="page-probe" data-page="probe" hidden>
@@ -263,6 +273,10 @@
     <button class="navbar__item" data-route="profiles" type="button">
       <span class="navbar__pill"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></span>
       <span class="navbar__label">Профили</span>
+    </button>
+    <button class="navbar__item" data-route="aggregates" type="button">
+      <span class="navbar__pill"><svg viewBox="0 0 24 24"><path d="M4 6h6M4 12h6M4 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M10 6h3a3 3 0 0 1 3 3v6a3 3 0 0 0 3 3h1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M10 12h3a3 3 0 0 0 3-3V9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></span>
+      <span class="navbar__label">Сборки</span>
     </button>
     <button class="navbar__item" data-route="probe" type="button">
       <span class="navbar__pill"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.6 19.4a10.5 10.5 0 0 1 0-14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>

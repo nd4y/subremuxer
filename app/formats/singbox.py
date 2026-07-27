@@ -18,7 +18,7 @@ from .base import NON_NODE_KINDS, Node, ParsedSubscription, SubFormat, canonical
 GROUP_TYPES = frozenset({"selector", "urltest"})
 
 
-def _is_node(entry: Any) -> bool:
+def is_node_entry(entry: Any) -> bool:
     if not isinstance(entry, dict):
         return False
     kind = canonical_protocol(str(entry.get("type", "")))
@@ -47,7 +47,7 @@ class SingboxSubscription(ParsedSubscription):
             if not isinstance(entries, list):
                 continue
             for position, entry in enumerate(entries):
-                if not _is_node(entry):
+                if not is_node_entry(entry):
                     continue
                 port = entry.get("server_port")
                 nodes.append(
@@ -89,6 +89,16 @@ class SingboxSubscription(ParsedSubscription):
 
     def content_type(self) -> str:
         return "application/json; charset=utf-8"
+
+    @property
+    def document(self) -> dict[str, Any]:
+        """The parsed document itself — the skeleton a merge builds on."""
+        return self._doc
+
+    def node_entry(self, index: int) -> tuple[str, dict[str, Any]]:
+        """``("outbounds" | "endpoints", entry)`` for a node, as it arrived."""
+        key, position = self._node_refs[index]
+        return key, self._doc[key][position]
 
 
 def _cascade_group_removal(doc: dict[str, Any], removed_tags: set[str]) -> None:

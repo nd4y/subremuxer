@@ -39,6 +39,9 @@ const icons = {
   sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.4M12 19.6V22M22 12h-2.4M4.4 12H2M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7M19.1 19.1l-1.7-1.7M6.6 6.6 4.9 4.9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
   auto: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/></svg>',
+  up: '<svg viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  down: '<svg viewBox="0 0 24 24"><path d="m6 10 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
 
 const HWID_RE = /^[a-zA-Z0-9=-]{10,64}$/;
@@ -134,6 +137,7 @@ const state = {
   route: "profiles",
   meta: null,
   profiles: [],
+  aggregates: [],
   templates: [],
   settings: null,
   probe: null,
@@ -1268,6 +1272,366 @@ async function loadProfiles() {
   renderStats(stats);
 }
 
+/* ------------------------------------------------------------- aggregates */
+
+function plural(count, forms) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+  return forms[2];
+}
+
+const OUTPUT_FORMAT_LABELS = {
+  base64: "Base64",
+  plain: "открытый список",
+};
+
+/** A viewer is told the same thing about an aggregate as about a profile. */
+function viewerAggregateCard(aggregate) {
+  return h(
+    "article",
+    { class: `profile${aggregate.enabled ? "" : " is-disabled"}` },
+    h(
+      "div",
+      { class: "profile__head" },
+      h(
+        "div",
+        { class: "profile__title" },
+        h("h2", { class: "profile__name", text: aggregate.name }),
+        h("span", {
+          class: "profile__upstream",
+          text: aggregate.enabled ? "Подписка активна" : "Подписка выключена",
+        })
+      ),
+      iconButton({
+        icon: icons.qr,
+        label: "Ссылка и QR-код",
+        onclick: () => showLinkSheet(aggregate, { kind: "aggregates" }),
+      })
+    ),
+    h(
+      "div",
+      { class: "profile__link", onclick: () => copyToClipboard(aggregate.subscription_url) },
+      h("span", { text: aggregate.subscription_url }),
+      iconButton({ icon: icons.copy, label: "Скопировать ссылку" })
+    ),
+    h(
+      "div",
+      { class: "profile__actions" },
+      h("button", {
+        class: "btn btn--tonal btn--small",
+        type: "button",
+        text: "Подключить",
+        onclick: () => showLinkSheet(aggregate, { kind: "aggregates" }),
+      })
+    )
+  );
+}
+
+function aggregateCard(aggregate) {
+  if (isViewer()) return viewerAggregateCard(aggregate);
+  const sources = aggregate.sources || [];
+  const badges = [
+    h("span", {
+      class: "badge badge--primary",
+      text: `${sources.length} ${plural(sources.length, ["источник", "источника", "источников"])}`,
+    }),
+  ];
+  if (aggregate.prefix_names) badges.push(h("span", { class: "badge", text: "с подписями" }));
+  if (aggregate.dedupe) badges.push(h("span", { class: "badge", text: "без дублей" }));
+  if (OUTPUT_FORMAT_LABELS[aggregate.output_format]) {
+    badges.push(
+      h("span", { class: "badge badge--tertiary", text: OUTPUT_FORMAT_LABELS[aggregate.output_format] })
+    );
+  }
+  // A source whose profile was deleted is the one failure the card can catch
+  // before the client does, so it is said out loud rather than left implicit.
+  const missing = sources.filter((source) => source.missing).length;
+  if (missing) {
+    badges.push(
+      h("span", {
+        class: "badge badge--error",
+        text: `${missing} ${plural(missing, ["источник удалён", "источника удалены", "источников удалено"])}`,
+      })
+    );
+  }
+  if (!aggregate.enabled) badges.push(h("span", { class: "badge badge--error", text: "выключена" }));
+
+  const summary = sources.length
+    ? sources.map((source) => source.name || "удалённый профиль").join(" + ")
+    : "источники не выбраны";
+
+  return h(
+    "article",
+    { class: `profile${aggregate.enabled ? "" : " is-disabled"}` },
+    h(
+      "div",
+      { class: "profile__head" },
+      h(
+        "div",
+        { class: "profile__title" },
+        h("h2", { class: "profile__name", text: aggregate.name }),
+        h("span", { class: "profile__upstream", text: summary })
+      ),
+      iconButton({
+        icon: icons.qr,
+        label: "Ссылка и QR-код",
+        onclick: () => showLinkSheet(aggregate, { kind: "aggregates" }),
+      })
+    ),
+    h("div", { class: "profile__badges" }, badges),
+    h(
+      "div",
+      { class: "profile__link", onclick: () => copyToClipboard(aggregate.subscription_url) },
+      h("span", { text: aggregate.subscription_url }),
+      iconButton({ icon: icons.copy, label: "Скопировать ссылку" })
+    ),
+    h(
+      "div",
+      { class: "profile__actions" },
+      h("button", {
+        class: "btn btn--tonal btn--small",
+        type: "button",
+        text: "Настроить",
+        onclick: () => showAggregateEditor(aggregate),
+      }),
+      h("span", { class: "spacer" }),
+      iconButton({
+        icon: icons.trash,
+        label: "Удалить сборку",
+        title: "Удалить",
+        onclick: () => deleteAggregate(aggregate),
+      })
+    )
+  );
+}
+
+async function deleteAggregate(aggregate) {
+  if (!(await attemptOk(() => api.del(`/api/aggregates/${aggregate.id}`)))) return;
+  state.aggregates = state.aggregates.filter((item) => item.id !== aggregate.id);
+  renderAggregates();
+  undoToast(`Сборка «${aggregate.name}» удалена`, async () => {
+    await api.post(`/api/aggregates/${aggregate.id}/restore`);
+    await loadAggregates();
+    toast(`Сборка «${aggregate.name}» восстановлена`);
+  });
+}
+
+function renderAggregates() {
+  const list = $("#aggregates-list");
+  if (!state.aggregates.length) {
+    list.className = "list";
+    list.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("p", { class: "empty__title", text: "Пока нет ни одной сборки" }),
+        h("p", {
+          text: isViewer()
+            ? "Здесь появятся объединённые подписки, которые администратор откроет для вас."
+            : "Сборка отдаёт несколько профилей по одной ссылке: каждый источник фильтруется своими правилами, а клиент получает общий список серверов.",
+        })
+      )
+    );
+    return;
+  }
+  list.className = "list list--profiles";
+  list.replaceChildren(...state.aggregates.map(aggregateCard));
+}
+
+async function loadAggregates() {
+  const list = $("#aggregates-list");
+  if (!state.aggregates.length && !list.childElementCount) {
+    list.replaceChildren(h("div", { class: "skeleton" }), h("div", { class: "skeleton" }));
+  }
+  // The editor picks sources out of the profile list, which may not have been
+  // fetched yet if this page was opened straight from a bookmark.
+  const [aggregates] = await Promise.all([
+    api.get("/api/aggregates"),
+    state.profiles.length || isViewer() ? null : loadProfiles(),
+  ]);
+  state.aggregates = aggregates;
+  renderAggregates();
+}
+
+function showAggregateEditor(existing) {
+  const draft = {
+    id: existing?.id ?? null,
+    enabled: existing ? existing.enabled : true,
+    prefix_names: existing ? existing.prefix_names : true,
+    dedupe: existing ? existing.dedupe : true,
+    output_format: existing?.output_format || "auto",
+    sources: (existing?.sources || []).map((source) => ({
+      profile_id: source.profile_id,
+      prefix: source.prefix || "",
+    })),
+  };
+
+  const nameField = field({ id: "a-name", label: "Название", value: existing?.name || "" });
+  const enabledSwitch = switchRow({
+    id: "a-enabled",
+    title: "Сборка включена",
+    hint: "Выключенная отдаёт клиентам 404 и не обращается к панелям.",
+    checked: draft.enabled,
+    onChange: (value) => {
+      draft.enabled = value;
+    },
+  });
+
+  const rows = h("div", { class: "sources" });
+  const picker = h("select", { class: "field__select", id: "a-add" });
+  const pickerField = wrapField(picker, "Добавить профиль");
+  const addButton = h("button", {
+    class: "btn btn--tonal btn--small",
+    type: "button",
+    text: "Добавить",
+    onclick: () => {
+      if (!picker.value) return;
+      draft.sources.push({ profile_id: Number(picker.value), prefix: "" });
+      renderSources();
+    },
+  });
+
+  function move(index, delta) {
+    const target = index + delta;
+    if (target < 0 || target >= draft.sources.length) return;
+    const [item] = draft.sources.splice(index, 1);
+    draft.sources.splice(target, 0, item);
+    renderSources();
+  }
+
+  function sourceRow(source, index) {
+    const profile = state.profiles.find((item) => item.id === source.profile_id) || null;
+    const prefixInput = h("input", {
+      class: "field__input",
+      placeholder: " ",
+      spellcheck: "false",
+      autocapitalize: "off",
+    });
+    prefixInput.value = source.prefix;
+    prefixInput.addEventListener("input", () => {
+      source.prefix = prefixInput.value;
+    });
+
+    return h(
+      "div",
+      { class: "source" },
+      h(
+        "div",
+        { class: "source__head" },
+        h("span", { class: "source__index", text: String(index + 1) }),
+        h("span", {
+          class: `source__name${profile ? "" : " source__name--missing"}`,
+          text: profile ? profile.name : `Профиль #${source.profile_id} удалён`,
+        }),
+        profile && !profile.enabled
+          ? h("span", { class: "badge badge--error", text: "выключен" })
+          : null,
+        h("span", { class: "spacer" }),
+        iconButton({ icon: icons.up, label: "Поднять источник", onclick: () => move(index, -1) }),
+        iconButton({ icon: icons.down, label: "Опустить источник", onclick: () => move(index, 1) }),
+        iconButton({
+          icon: icons.close,
+          label: "Убрать из сборки",
+          onclick: () => {
+            draft.sources.splice(index, 1);
+            renderSources();
+          },
+        })
+      ),
+      wrapField(prefixInput, "Подпись (пусто — название профиля)")
+    );
+  }
+
+  function renderSources() {
+    rows.replaceChildren(
+      ...(draft.sources.length
+        ? draft.sources.map(sourceRow)
+        : [h("p", { class: "section__hint", text: "Пока ни одного источника." })])
+    );
+    const used = new Set(draft.sources.map((item) => item.profile_id));
+    const available = state.profiles.filter((item) => !used.has(item.id));
+    picker.replaceChildren(
+      ...available.map((item) => h("option", { value: String(item.id) }, item.name))
+    );
+    picker.disabled = !available.length;
+    addButton.disabled = !available.length;
+    pickerField.hidden = !available.length;
+    addButton.hidden = !available.length;
+  }
+
+  renderSources();
+
+  async function save() {
+    await attemptOk(async () => {
+      const payload = {
+        name: $("input", nameField).value,
+        enabled: draft.enabled,
+        prefix_names: draft.prefix_names,
+        dedupe: draft.dedupe,
+        output_format: draft.output_format,
+        sources: draft.sources,
+      };
+      if (draft.id) await api.put(`/api/aggregates/${draft.id}`, payload);
+      else await api.post("/api/aggregates", payload);
+      closeSheet();
+      await loadAggregates();
+      toast(draft.id ? "Сборка сохранена" : "Сборка создана");
+    });
+  }
+
+  openSheet({
+    title: existing ? "Настройка сборки" : "Новая сборка",
+    body: [
+      section("Основное", null, nameField, enabledSwitch),
+      section(
+        "Источники",
+        "Порядок здесь — порядок серверов в итоговой подписке. Формат берётся у первого источника: если панель ответит другим форматом, её серверы будут пропущены, и это попадёт в журнал.",
+        rows,
+        h("div", { class: "row" }, pickerField, addButton)
+      ),
+      section(
+        "Как собирать",
+        null,
+        switchRow({
+          id: "a-prefix",
+          title: "Подписывать серверы источником",
+          hint: "К имени каждого сервера добавится подпись — иначе одинаковые названия из разных панелей не отличить.",
+          checked: draft.prefix_names,
+          onChange: (value) => {
+            draft.prefix_names = value;
+          },
+        }),
+        switchRow({
+          id: "a-dedupe",
+          title: "Убирать дубликаты",
+          hint: "Один и тот же адрес и порт попадут в список один раз — полезно, когда панели частично пересекаются.",
+          checked: draft.dedupe,
+          onChange: (value) => {
+            draft.dedupe = value;
+          },
+        }),
+        segmented({
+          value: draft.output_format,
+          options: [
+            { value: "auto", label: "Как у источника" },
+            { value: "base64", label: "Base64" },
+            { value: "plain", label: "Открытый список" },
+          ],
+          onChange: (value) => {
+            draft.output_format = value;
+          },
+        })
+      ),
+    ],
+    footer: [
+      h("button", { class: "btn btn--outlined", type: "button", text: "Отмена", onclick: () => closeSheet() }),
+      h("button", { class: "btn btn--filled", type: "button", text: "Сохранить", onclick: save }),
+    ],
+  });
+}
+
 /* ------------------------------------------------------- link & QR sheet */
 
 const OS_OPTIONS = [
@@ -1395,8 +1759,15 @@ function clientButtons(url, os) {
   );
 }
 
-function showLinkSheet(profile) {
+/**
+ * The link, its QR code and the client buttons. Profiles and aggregates are the
+ * same thing from here on — a token to hand out — so `kind` only picks which
+ * API path the QR, the token rotation and the reload go through.
+ */
+function showLinkSheet(item, { kind = "profiles" } = {}) {
+  const profile = item;
   const url = profile.subscription_url;
+  const reload = kind === "profiles" ? loadProfiles : loadAggregates;
   let os = detectOs();
 
   const clientsBox = h("div", {}, clientButtons(url, os));
@@ -1428,7 +1799,7 @@ function showLinkSheet(profile) {
       h(
         "div",
         { class: "qr__frame" },
-        h("img", { src: `/api/profiles/${profile.id}/qr.svg`, alt: "QR-код подписки" })
+        h("img", { src: `/api/${kind}/${profile.id}/qr.svg`, alt: "QR-код подписки" })
       ),
       h("div", { class: "qr__url", text: url })
     ),
@@ -1472,34 +1843,38 @@ function showLinkSheet(profile) {
     title: profile.name,
     body: [
       ...common,
-      section(
-        "Конфигурация профиля",
-        "Файл содержит токен подписки и HWID — храните его как секрет.",
-        h(
-          "div",
-          { class: "card__actions" },
-          h("button", {
-            class: "btn btn--tonal btn--small",
-            type: "button",
-            text: "Экспорт YAML",
-            onclick: () =>
-              downloadExport(
-                `/api/profiles/${profile.id}/export?format=yaml`,
-                `subremuxer-${profile.id}.yaml`
-              ),
-          }),
-          h("button", {
-            class: "btn btn--tonal btn--small",
-            type: "button",
-            text: "Экспорт JSON",
-            onclick: () =>
-              downloadExport(
-                `/api/profiles/${profile.id}/export?format=json`,
-                `subremuxer-${profile.id}.json`
-              ),
-          })
-        )
-      ),
+      // An aggregate has nothing of its own to export: everything that defines
+      // it lives in the profiles it points at, and those export separately.
+      kind === "profiles"
+        ? section(
+            "Конфигурация профиля",
+            "Файл содержит токен подписки и HWID — храните его как секрет.",
+            h(
+              "div",
+              { class: "card__actions" },
+              h("button", {
+                class: "btn btn--tonal btn--small",
+                type: "button",
+                text: "Экспорт YAML",
+                onclick: () =>
+                  downloadExport(
+                    `/api/profiles/${profile.id}/export?format=yaml`,
+                    `subremuxer-${profile.id}.yaml`
+                  ),
+              }),
+              h("button", {
+                class: "btn btn--tonal btn--small",
+                type: "button",
+                text: "Экспорт JSON",
+                onclick: () =>
+                  downloadExport(
+                    `/api/profiles/${profile.id}/export?format=json`,
+                    `subremuxer-${profile.id}.json`
+                  ),
+              })
+            )
+          )
+        : null,
       section(
         "Безопасность",
         "Смена токена мгновенно ломает старую ссылку — используйте, если она куда-то утекла.",
@@ -1509,14 +1884,14 @@ function showLinkSheet(profile) {
           text: "Сменить токен",
           onclick: () =>
             attemptOk(async () => {
-              await api.post(`/api/profiles/${profile.id}/rotate-token`);
+              await api.post(`/api/${kind}/${profile.id}/rotate-token`);
               closeSheet();
-              await loadProfiles();
+              await reload();
               toast("Токен обновлён");
             }),
         })
       ),
-    ],
+    ].filter(Boolean),
     footer: [
       h("button", {
         class: "btn btn--tonal",
@@ -1712,6 +2087,12 @@ async function showConfigEditor() {
       const verb = applied ? "Удалены шаблоны" : "Будут удалены шаблоны";
       lines.push(`${verb}: ${summary.templates_removed.join(", ")}`);
     }
+    if (summary.aggregates_created) lines.push(`Новых сборок: ${summary.aggregates_created}`);
+    if (summary.aggregates_updated) lines.push(`Обновлённых сборок: ${summary.aggregates_updated}`);
+    if (summary.aggregates_removed?.length) {
+      const verb = applied ? "Удалены сборки" : "Будут удалены сборки";
+      lines.push(`${verb}: ${summary.aggregates_removed.join(", ")}`);
+    }
     if (summary.settings_changed.length) {
       lines.push(applied ? "Общие настройки применены" : "Общие настройки будут применены");
     }
@@ -1752,7 +2133,7 @@ async function showConfigEditor() {
       editor.setValue(result.content);
       dirty = false;
       showStatus("ok", "Конфигурация применена", describe(result.summary, true));
-      await Promise.all([loadProfiles(), loadTemplates(), loadSettings()]);
+      await Promise.all([loadProfiles(), loadAggregates(), loadTemplates(), loadSettings()]);
       toast("Конфигурация применена");
     } catch (error) {
       showStatus("error", "Не удалось применить", [error.message]);
@@ -1916,10 +2297,11 @@ function showImportSheet() {
               with_settings: withSettings,
             });
             closeSheet();
-            await Promise.all([loadProfiles(), loadTemplates(), loadSettings()]);
+            await Promise.all([loadProfiles(), loadAggregates(), loadTemplates(), loadSettings()]);
             const parts = [];
             if (result.profiles_created) parts.push(`профилей: ${result.profiles_created}`);
             if (result.templates_created) parts.push(`шаблонов: ${result.templates_created}`);
+            if (result.aggregates_created) parts.push(`сборок: ${result.aggregates_created}`);
             if (result.settings_applied.length) parts.push("настройки применены");
             toast(parts.length ? `Импортировано — ${parts.join(", ")}` : "Импортировать было нечего");
             if (result.errors.length) {
@@ -2419,8 +2801,15 @@ function logEntry(entry) {
       ["Время", formatTime(entry.ts)],
       ["Клиент", `${entry.client_ip || "?"} · ${entry.user_agent || "без UA"}`],
       ["Апстрим", `${entry.upstream_url || "—"} → ${entry.upstream_status ?? "—"} (${entry.upstream_ms ?? 0} мс)`],
-      ["HWID клиента", entry.hwid_in || "не прислан"],
-      ["HWID отправлен", `${entry.hwid_sent || "—"} (${entry.hwid_action || "—"})`],
+      // An aggregate's summary row talks to no panel of its own — the HWID it
+      // sent lives in each source's own entry, so showing empty rows here would
+      // read as "nothing was sent" rather than "ask the source".
+      ...(entry.hwid_action
+        ? [
+            ["HWID клиента", entry.hwid_in || "не прислан"],
+            ["HWID отправлен", `${entry.hwid_sent || "—"} (${entry.hwid_action || "—"})`],
+          ]
+        : []),
       ["Формат", `${entry.detected_format || "—"} → ${entry.output_format || "—"}`],
       ["Серверов", `получено ${entry.nodes_total}, отдано ${entry.nodes_kept}`],
       ["Размер", `${entry.bytes_in} B → ${entry.bytes_out} B`],
@@ -2727,30 +3116,44 @@ const PAGES = {
   profiles: { title: "Профили", subtitle: "Прокси-подписки, которые отдаёт это приложение" },
   // The same page, described for someone who only consumes what is on it.
   profilesViewer: { title: "Подписки", subtitle: "Ссылки для ваших клиентов" },
+  aggregates: { title: "Сборки", subtitle: "Несколько профилей под одной ссылкой" },
+  aggregatesViewer: { title: "Сборки", subtitle: "Объединённые ссылки для ваших клиентов" },
   probe: { title: "Захват", subtitle: "Узнать HWID и данные устройства прямо из клиента" },
   logs: { title: "Логи", subtitle: "Кто, когда и что получил" },
   settings: { title: "Настройки", subtitle: "Значения по умолчанию, шаблоны и оформление" },
 };
 
+//: Pages that hold links to hand out — the only ones a viewer may open.
+const VIEWER_ROUTES = ["profiles", "aggregates"];
+
+//: What the floating button creates, per page. Absent means no button.
+const FAB_LABELS = { profiles: "Профиль", aggregates: "Сборка" };
+
 async function navigate(route, { silent = false } = {}) {
   if (!PAGES[route]) route = "profiles";
-  // A viewer has exactly one page. A stale bookmark to #/logs should land them
-  // somewhere useful rather than on a 403.
-  if (isViewer()) route = "profiles";
+  // A stale bookmark to #/logs should land a viewer somewhere useful rather
+  // than on a 403.
+  if (isViewer() && !VIEWER_ROUTES.includes(route)) route = "profiles";
   state.route = route;
 
   $$(".page").forEach((page) => {
     page.hidden = page.dataset.page !== route;
   });
   $$("[data-route]").forEach((item) => item.classList.toggle("is-active", item.dataset.route === route));
-  const page = PAGES[isViewer() && route === "profiles" ? "profilesViewer" : route];
+  const page = PAGES[isViewer() && VIEWER_ROUTES.includes(route) ? `${route}Viewer` : route];
   $("#page-title").textContent = page.title;
   $("#page-subtitle").textContent = page.subtitle;
-  $("#fab-add").classList.toggle("is-hidden", route !== "profiles");
+  const fab = $("#fab-add");
+  fab.classList.toggle("is-hidden", !FAB_LABELS[route]);
+  if (FAB_LABELS[route]) {
+    $(".fab__label", fab).textContent = FAB_LABELS[route];
+    fab.setAttribute("aria-label", `Добавить: ${FAB_LABELS[route].toLowerCase()}`);
+  }
   if (!silent) location.hash = `#/${route}`;
 
   try {
     if (route === "profiles") await loadProfiles();
+    else if (route === "aggregates") await loadAggregates();
     else if (route === "probe") await loadProbe();
     else if (route === "logs") await loadLogs();
     else if (route === "settings") await loadSettings();
@@ -2868,7 +3271,7 @@ function applyRoleToChrome() {
   document.body.classList.toggle("is-viewer", viewer);
   // Rail and bottom bar are separate elements with the same data-route values.
   $$("[data-route]").forEach((item) => {
-    if (item.dataset.route !== "profiles") item.hidden = viewer;
+    if (!VIEWER_ROUTES.includes(item.dataset.route)) item.hidden = viewer;
   });
   $("#fab-add").hidden = viewer;
   const account = $("#topbar-account");
@@ -2932,7 +3335,9 @@ async function boot() {
     item.addEventListener("click", () => navigate(item.dataset.route));
   });
 
-  $("#fab-add").addEventListener("click", () => showNewProfileChooser());
+  $("#fab-add").addEventListener("click", () =>
+    state.route === "aggregates" ? showAggregateEditor(null) : showNewProfileChooser()
+  );
   $("#rail-theme").addEventListener("click", cycleTheme);
   $("#topbar-theme").addEventListener("click", cycleTheme);
   $("#sheet-close").addEventListener("click", () => closeSheet());

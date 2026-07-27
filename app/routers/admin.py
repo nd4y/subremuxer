@@ -18,6 +18,7 @@ import segno
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
+from ..aggregates import Aggregate, AggregateError, AggregateRepository
 from ..filtering import (
     CONDITION_OPS,
     PRESETS,
@@ -74,6 +75,10 @@ def _repo(request: Request) -> ProfileRepository:
     return ProfileRepository(request.app.state.db)
 
 
+def _aggregates(request: Request) -> AggregateRepository:
+    return AggregateRepository(request.app.state.db)
+
+
 def _logs(request: Request) -> LogRepository:
     return LogRepository(request.app.state.db)
 
@@ -91,11 +96,11 @@ def _drop_cache(request: Request) -> None:
     request.app.state.cache = UpstreamCache()
 
 
-def _with_link(profile: Profile, request: Request) -> dict[str, Any]:
-    """The profile plus the one field only the web layer can add — its public URL."""
+def _with_link(item: Profile | Aggregate, request: Request) -> dict[str, Any]:
+    """The record plus the one field only the web layer can add — its public URL."""
     return {
-        **profile.as_dict(),
-        "subscription_url": f"{_public_base(request)}/s/{profile.token}",
+        **item.as_dict(),
+        "subscription_url": f"{_public_base(request)}/s/{item.token}",
     }
 
 
@@ -321,6 +326,117 @@ async def rotate_token(request: Request, profile_id: int) -> dict[str, Any]:
     return _with_link(profile, request)
 
 
+# ----------------------------------------------------------------- aggregates
+
+
+#: The same shape a viewer gets for a profile: the link, and nothing about how
+#: it is put together.
+VIEWER_AGGREGATE_FIELDS = ("id", "name", "enabled", "subscription_url", "updated_at")
+
+
+def _aggregate_full(aggregate: Aggregate, request: Request) -> dict[str, Any]:
+    """Everything an administrator needs, sources resolved to names.
+
+    Resolving them here saves the interface a second request and is the only
+    place that can tell a source that was deleted from one merely switched off.
+    """
+    profiles = {profile.id: profile for profile in _repo(request).list()}
+    data = _with_link(aggregate, request)
+    data["sources"] = [
+        {
+            **source.as_dict(),
+            "name": getattr(profiles.get(source.profile_id), "name", None),
+            "enabled": bool(getattr(profiles.get(source.profile_id), "enabled", False)),
+            "missing": source.profile_id not in profiles,
+        }
+        for source in aggregate.sources
+    ]
+    return data
+
+
+def _aggregate_view(
+    aggregate: Aggregate, request: Request, identity: Identity
+) -> dict[str, Any]:
+    if not identity.is_admin:
+        data = _with_link(aggregate, request)
+        return {key: data[key] for key in VIEWER_AGGREGATE_FIELDS if key in data}
+    return _aggregate_full(aggregate, request)
+
+
+@shared.get("/aggregates")
+async def list_aggregates(
+    request: Request, identity: Identity = Depends(require_session)
+) -> list[dict[str, Any]]:
+    return [_aggregate_view(item, request, identity) for item in _aggregates(request).list()]
+
+
+@shared.get("/aggregates/{aggregate_id}")
+async def get_aggregate(
+    request: Request, aggregate_id: int, identity: Identity = Depends(require_session)
+) -> dict[str, Any]:
+    aggregate = _aggregates(request).get(aggregate_id)
+    if aggregate is None:
+        raise HTTPException(status_code=404, detail="Сборка не найдена")
+    return _aggregate_view(aggregate, request, identity)
+
+
+@shared.get("/aggregates/{aggregate_id}/qr.svg")
+async def aggregate_qr(request: Request, aggregate_id: int) -> Response:
+    aggregate = _aggregates(request).get(aggregate_id)
+    if aggregate is None:
+        raise HTTPException(status_code=404, detail="Сборка не найдена")
+    url = f"{_public_base(request)}/s/{aggregate.token}"
+    return Response(content=qr_svg(url), media_type="image/svg+xml")
+
+
+@guarded.post("/aggregates", status_code=201)
+async def create_aggregate(
+    request: Request, payload: dict[str, Any] = Body(...)
+) -> dict[str, Any]:
+    try:
+        aggregate = _aggregates(request).create(payload)
+    except AggregateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _aggregate_full(aggregate, request)
+
+
+@guarded.put("/aggregates/{aggregate_id}")
+async def update_aggregate(
+    request: Request, aggregate_id: int, payload: dict[str, Any] = Body(...)
+) -> dict[str, Any]:
+    try:
+        aggregate = _aggregates(request).update(aggregate_id, payload)
+    except AggregateError as exc:
+        status = 404 if "не найдена" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return _aggregate_full(aggregate, request)
+
+
+@guarded.delete("/aggregates/{aggregate_id}")
+async def delete_aggregate(request: Request, aggregate_id: int) -> dict[str, bool]:
+    if not _aggregates(request).delete(aggregate_id):
+        raise HTTPException(status_code=404, detail="Сборка не найдена")
+    return {"ok": True}
+
+
+@guarded.post("/aggregates/{aggregate_id}/restore")
+async def restore_aggregate(request: Request, aggregate_id: int) -> dict[str, Any]:
+    try:
+        aggregate = _aggregates(request).restore(aggregate_id)
+    except AggregateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _aggregate_full(aggregate, request)
+
+
+@guarded.post("/aggregates/{aggregate_id}/rotate-token")
+async def rotate_aggregate_token(request: Request, aggregate_id: int) -> dict[str, Any]:
+    try:
+        aggregate = _aggregates(request).rotate_token(aggregate_id)
+    except AggregateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _aggregate_full(aggregate, request)
+
+
 def qr_svg(data: str) -> str:
     """A QR always renders dark-on-light — scanners need that contrast."""
     qr = segno.make(data, error="m")
@@ -371,6 +487,7 @@ async def export_everything(
         [profile.as_dict() for profile in _repo(request).list()],
         [template.as_dict() for template in _templates(request).list()],
         request.app.state.db.all_settings(),
+        [item.as_dict() for item in _aggregates(request).list()],
         with_tokens=with_tokens,
     )
     return _export_response(document, format, "subremuxer-config")
@@ -385,7 +502,9 @@ async def import_configuration(
     except PortabilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    importer = Importer(_repo(request), _templates(request), request.app.state.db)
+    importer = Importer(
+        _repo(request), _templates(request), request.app.state.db, _aggregates(request)
+    )
     try:
         result = importer.apply(
             document,
@@ -400,6 +519,7 @@ async def import_configuration(
         "kind": document["kind"],
         "profiles_created": result["profiles_created"],
         "templates_created": result["templates_created"],
+        "aggregates_created": result["aggregates_created"],
         "settings_applied": result["settings_applied"],
         "errors": result["errors"],
     }
@@ -413,6 +533,7 @@ def _current_bundle(request: Request) -> dict[str, Any]:
         [profile.as_dict() for profile in _repo(request).list()],
         [template.as_dict() for template in _templates(request).list()],
         request.app.state.db.all_settings(),
+        [item.as_dict() for item in _aggregates(request).list()],
         with_tokens=True,
     )
 
@@ -430,9 +551,9 @@ async def validate_config(request: Request, payload: dict[str, Any] = Body(...))
     """Dry run: parse, validate and describe the change without touching anything."""
     try:
         document = parse_document(str(payload.get("content") or ""))
-        plan = ConfigApplier(_repo(request), _templates(request), request.app.state.db).plan(
-            document
-        )
+        plan = ConfigApplier(
+            _repo(request), _templates(request), request.app.state.db, _aggregates(request)
+        ).plan(document)
     except PortabilityError as exc:
         return {"ok": False, "errors": [str(exc)], "summary": None}
     plan.pop("_plan", None)
@@ -444,9 +565,9 @@ async def write_config(request: Request, payload: dict[str, Any] = Body(...)) ->
     """Make the instance match the edited document. Validated in full beforehand."""
     try:
         document = parse_document(str(payload.get("content") or ""))
-        result = ConfigApplier(_repo(request), _templates(request), request.app.state.db).apply(
-            document
-        )
+        result = ConfigApplier(
+            _repo(request), _templates(request), request.app.state.db, _aggregates(request)
+        ).apply(document)
     except PortabilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -688,6 +809,7 @@ async def stats(request: Request) -> dict[str, Any]:
     data = _logs(request).stats()
     data["profiles_total"] = len(profiles)
     data["profiles_enabled"] = sum(1 for profile in profiles if profile.enabled)
+    data["aggregates_total"] = len(_aggregates(request).list())
     return data
 
 

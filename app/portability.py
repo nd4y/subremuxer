@@ -11,6 +11,12 @@ from typing import Any
 
 import yaml
 
+from .aggregates import (
+    AggregateError,
+    AggregateRepository,
+    parse_sources,
+    validate_aggregate_payload,
+)
 from .profiles import ProfileError, ProfileRepository, unique_name, validate_profile_payload
 from .templates import TemplateError, TemplateRepository, validate_payload
 
@@ -33,6 +39,18 @@ PROFILE_FIELDS = (
     "protocols",
     "output_format",
     "cache_ttl",
+)
+
+
+#: Everything that defines an aggregate. Its sources travel as profile *names*,
+#: not ids: a bundle has to survive being restored onto an empty instance, where
+#: the same profiles will be numbered differently.
+AGGREGATE_FIELDS = (
+    "name",
+    "enabled",
+    "prefix_names",
+    "dedupe",
+    "output_format",
 )
 
 
@@ -77,14 +95,30 @@ SETTINGS_FIELDS = (
 )
 
 
+def _aggregate_document(
+    aggregate: dict[str, Any], profile_names: dict[int, str], *, with_token: bool
+) -> dict[str, Any]:
+    data = {key: aggregate.get(key) for key in AGGREGATE_FIELDS}
+    data["sources"] = [
+        {"profile": profile_names.get(int(source["profile_id"]), ""), "prefix": source["prefix"]}
+        for source in aggregate.get("sources") or []
+        if int(source["profile_id"]) in profile_names
+    ]
+    if with_token:
+        data["token"] = aggregate.get("token")
+    return data
+
+
 def export_bundle(
     profiles: list[dict[str, Any]],
     templates: list[dict[str, Any]],
     settings: dict[str, Any] | None = None,
+    aggregates: list[dict[str, Any]] | None = None,
     *,
     with_tokens: bool = True,
 ) -> dict[str, Any]:
-    """The whole configuration: settings, templates and every profile."""
+    """The whole configuration: settings, templates, profiles and aggregates."""
+    profile_names = {int(item["id"]): str(item["name"]) for item in profiles if "id" in item}
     return {
         "kind": KIND_BUNDLE,
         "version": EXPORT_VERSION,
@@ -93,6 +127,10 @@ def export_bundle(
         },
         "templates": [_template_document(item) for item in templates],
         "profiles": [_profile_document(item, with_token=with_tokens) for item in profiles],
+        "aggregates": [
+            _aggregate_document(item, profile_names, with_token=with_tokens)
+            for item in aggregates or []
+        ],
     }
 
 
@@ -137,6 +175,42 @@ def parse(content: str) -> dict[str, Any]:
     return data
 
 
+def _aggregate_payload(entry: dict[str, Any], profile_ids: dict[str, int]) -> dict[str, Any]:
+    """Turn a document entry into a payload the repository understands."""
+    payload = {key: entry.get(key) for key in AGGREGATE_FIELDS if key in entry}
+    raw = entry.get("sources")
+    if raw is not None and not isinstance(raw, list):
+        raise PortabilityError("список источников должен быть массивом")
+    sources: list[Any] = []
+    for item in raw or []:
+        if isinstance(item, dict) and "profile" in item:
+            name = str(item.get("profile") or "")
+            if name not in profile_ids:
+                raise PortabilityError(f"источник «{name}» не найден среди профилей")
+            sources.append(
+                {"profile_id": profile_ids[name], "prefix": str(item.get("prefix") or "")}
+            )
+        else:
+            # A hand-written file may address a profile by its id directly.
+            sources.append(item)
+    payload["sources"] = sources
+    return payload
+
+
+def _placeholder_sources(sources: list[Any]) -> list[Any]:
+    """The same list with profile names swapped for stand-in ids, one per name."""
+    numbers: dict[str, int] = {}
+    result: list[Any] = []
+    for item in sources:
+        if isinstance(item, dict) and "profile" in item:
+            key = str(item.get("profile") or "")
+            numbers.setdefault(key, len(numbers) + 1)
+            result.append({"profile_id": numbers[key], "prefix": item.get("prefix")})
+        else:
+            result.append(item)
+    return result
+
+
 def _unique_name(name: str, taken: set[str]) -> str:
     return unique_name(
         name, taken, marker="импорт", fallback="Импортированный профиль", keep_base=True
@@ -151,10 +225,12 @@ class Importer:
         profiles: ProfileRepository,
         templates: TemplateRepository,
         db: Any = None,
+        aggregates: AggregateRepository | None = None,
     ) -> None:
         self.profiles = profiles
         self.templates = templates
         self.db = db
+        self.aggregates = aggregates
 
     def apply(
         self, document: dict[str, Any], *, keep_tokens: bool = False, with_settings: bool = True
@@ -164,23 +240,33 @@ class Importer:
             [document.get("profile")] if kind == KIND_PROFILE else document.get("profiles") or []
         )
         raw_templates = document.get("templates") or [] if kind == KIND_BUNDLE else []
+        raw_aggregates = document.get("aggregates") or [] if kind == KIND_BUNDLE else []
 
-        if not isinstance(raw_profiles, list) or not isinstance(raw_templates, list):
+        if (
+            not isinstance(raw_profiles, list)
+            or not isinstance(raw_templates, list)
+            or not isinstance(raw_aggregates, list)
+        ):
             raise PortabilityError("повреждённая структура файла")
 
         created_profiles: list[dict[str, Any]] = []
         created_templates: list[dict[str, Any]] = []
+        created_aggregates: list[dict[str, Any]] = []
         errors: list[str] = []
 
         taken = {profile.name for profile in self.profiles.list()}
         existing_tokens = {profile.token for profile in self.profiles.list()}
+        # Sources are written down by name; renaming on import must not break
+        # them, so the *document's* name is what maps to the created profile.
+        profile_ids = {profile.name: profile.id for profile in self.profiles.list()}
 
         for entry in raw_profiles:
             if not isinstance(entry, dict):
                 errors.append("профиль пропущен: ожидался объект")
                 continue
             payload = {key: entry.get(key) for key in PROFILE_FIELDS if key in entry}
-            payload["name"] = _unique_name(str(payload.get("name") or ""), taken)
+            original_name = str(payload.get("name") or "")
+            payload["name"] = _unique_name(original_name, taken)
             token = str(entry.get("token") or "")
             if keep_tokens and token and token not in existing_tokens:
                 payload["token"] = token
@@ -191,6 +277,7 @@ class Importer:
                 continue
             taken.add(profile.name)
             existing_tokens.add(profile.token)
+            profile_ids[original_name] = profile.id
             created_profiles.append(profile.as_dict())
 
         template_names = {template.name for template in self.templates.list()}
@@ -216,6 +303,32 @@ class Importer:
             template_names.add(template.name)
             created_templates.append(template.as_dict())
 
+        if self.aggregates is not None:
+            aggregate_names = {item.name for item in self.aggregates.list()}
+            aggregate_tokens = {item.token for item in self.aggregates.list()}
+            for entry in raw_aggregates:
+                if not isinstance(entry, dict):
+                    errors.append("сборка пропущена: ожидался объект")
+                    continue
+                name = str(entry.get("name") or "Импортированная сборка")
+                try:
+                    payload = _aggregate_payload(entry, profile_ids)
+                except PortabilityError as exc:
+                    errors.append(f"сборка «{name}»: {exc}")
+                    continue
+                payload["name"] = _unique_name(name, aggregate_names)
+                token = str(entry.get("token") or "")
+                if keep_tokens and token and token not in aggregate_tokens:
+                    payload["token"] = token
+                try:
+                    aggregate = self.aggregates.create(payload)
+                except (AggregateError, ValueError) as exc:
+                    errors.append(f"сборка «{payload['name']}»: {exc}")
+                    continue
+                aggregate_names.add(aggregate.name)
+                aggregate_tokens.add(aggregate.token)
+                created_aggregates.append(aggregate.as_dict())
+
         settings_applied: list[str] = []
         raw_settings = document.get("settings")
         if with_settings and self.db is not None and isinstance(raw_settings, dict):
@@ -231,9 +344,11 @@ class Importer:
         return {
             "profiles_created": len(created_profiles),
             "templates_created": len(created_templates),
+            "aggregates_created": len(created_aggregates),
             "settings_applied": settings_applied,
             "profiles": created_profiles,
             "templates": created_templates,
+            "aggregates": created_aggregates,
             "errors": errors,
         }
 
@@ -250,11 +365,16 @@ class ConfigApplier:
     """
 
     def __init__(
-        self, profiles: ProfileRepository, templates: TemplateRepository, db: Any
+        self,
+        profiles: ProfileRepository,
+        templates: TemplateRepository,
+        db: Any,
+        aggregates: AggregateRepository | None = None,
     ) -> None:
         self.profiles = profiles
         self.templates = templates
         self.db = db
+        self.aggregates = aggregates
 
     # -- planning ---------------------------------------------------------
 
@@ -350,6 +470,10 @@ class ConfigApplier:
                 )
             )
 
+        planned_aggregates, removed_aggregates = self._plan_aggregates(
+            document, seen_names, errors
+        )
+
         removed_profiles = [
             profile for profile in existing_profiles if profile.id not in matched_ids
         ]
@@ -376,16 +500,97 @@ class ConfigApplier:
                 "templates_created": sum(1 for match, _ in planned_templates if match is None),
                 "templates_updated": sum(1 for match, _ in planned_templates if match is not None),
                 "templates_removed": [template.name for template in removed_templates],
+                "aggregates_created": sum(1 for match, _ in planned_aggregates if match is None),
+                "aggregates_updated": sum(
+                    1 for match, _ in planned_aggregates if match is not None
+                ),
+                "aggregates_removed": [item.name for item in removed_aggregates],
                 "settings_changed": sorted(settings),
             },
             "_plan": {
                 "profiles": planned_profiles,
                 "templates": planned_templates,
+                "aggregates": planned_aggregates,
                 "removed_profiles": removed_profiles,
                 "removed_templates": removed_templates,
+                "removed_aggregates": removed_aggregates,
                 "settings": settings,
             },
         }
+
+    def _plan_aggregates(
+        self, document: dict[str, Any], profile_names: set[str], errors: list[str]
+    ) -> tuple[list[tuple[Any, dict[str, Any]]], list[Any]]:
+        """Validate the document's aggregates against the profiles it declares.
+
+        Sources are checked against the *document*, not against the instance: a
+        full apply removes any profile the document leaves out, so a source that
+        only exists on this instance today would break tomorrow.
+        """
+        if self.aggregates is None:
+            return [], []
+        raw = document.get("aggregates") or []
+        if not isinstance(raw, list):
+            errors.append("поле aggregates должно быть списком")
+            return [], []
+
+        existing = self.aggregates.list()
+        by_token = {item.token: item for item in existing}
+        by_name = {item.name: item for item in existing}
+        matched_ids: set[int] = set()
+        planned: list[tuple[Any, dict[str, Any]]] = []
+        seen: set[str] = set()
+
+        for index, entry in enumerate(raw, start=1):
+            if not isinstance(entry, dict):
+                errors.append(f"сборка #{index}: ожидался объект")
+                continue
+            name = str(entry.get("name") or "").strip()
+            if name in seen:
+                errors.append(f"сборка «{name}»: имя встречается дважды")
+                continue
+            seen.add(name)
+
+            token = str(entry.get("token") or "")
+            match = by_token.get(token) or (by_name.get(name) if not token else None)
+            if match is not None and match.id in matched_ids:
+                match = None
+            if match is not None:
+                matched_ids.add(match.id)
+
+            # Names are resolved to ids only when applying — profiles the
+            # document creates do not have ids yet.
+            payload = {key: entry.get(key) for key in AGGREGATE_FIELDS if key in entry}
+            sources = entry.get("sources") or []
+            if not isinstance(sources, list):
+                errors.append(f"сборка «{name or index}»: список источников должен быть массивом")
+                continue
+            payload["sources"] = sources
+
+            unknown = [
+                str(item.get("profile") or "")
+                for item in sources
+                if isinstance(item, dict) and str(item.get("profile") or "") not in profile_names
+            ]
+            if unknown:
+                errors.append(f"сборка «{name or index}»: нет профиля {', '.join(unknown)}")
+                continue
+            try:
+                validate_aggregate_payload({**payload, "sources": []})
+                # Stand-in ids, so the real rules about duplicates, prefix length
+                # and source count still run before anything is written.
+                parse_sources(_placeholder_sources(sources))
+            except AggregateError as exc:
+                errors.append(f"сборка «{name or index}»: {exc}")
+                continue
+            if match is not None:
+                payload["token"] = match.token
+            elif token:
+                payload["token"] = token
+            planned.append((match, payload))
+
+        removed = [item for item in existing if item.id not in matched_ids]
+        return planned, removed
 
     # -- applying ---------------------------------------------------------
 
@@ -414,6 +619,22 @@ class ConfigApplier:
 
         for template in detail["removed_templates"]:
             self.templates.delete(template.id)
+
+        if self.aggregates is not None:
+            # Now that every profile the document declares exists, its sources
+            # can finally be turned from names into ids.
+            profile_ids = {profile.name: profile.id for profile in self.profiles.list()}
+            for match, payload in detail["aggregates"]:
+                resolved = _aggregate_payload(payload, profile_ids)
+                if payload.get("token"):
+                    resolved["token"] = payload["token"]
+                if match is None:
+                    self.aggregates.create(resolved)
+                else:
+                    self.aggregates.update(match.id, resolved)
+
+            for aggregate in detail["removed_aggregates"]:
+                self.aggregates.delete(aggregate.id)
 
         for key, value in detail["settings"].items():
             if key == "probe_token" and not value:

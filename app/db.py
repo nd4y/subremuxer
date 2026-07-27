@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -71,6 +71,23 @@ CREATE TABLE IF NOT EXISTS profiles (
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER NOT NULL,
     deleted_at     INTEGER
+);
+
+-- Several profiles republished under one link. The sources keep their own
+-- filters, HWID and mimicry — a row here only says which ones to combine and
+-- how to label the result.
+CREATE TABLE IF NOT EXISTS aggregates (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL,
+    token         TEXT    NOT NULL UNIQUE,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    sources_json  TEXT    NOT NULL DEFAULT '[]',
+    prefix_names  INTEGER NOT NULL DEFAULT 1,
+    dedupe        INTEGER NOT NULL DEFAULT 1,
+    output_format TEXT    NOT NULL DEFAULT 'auto',
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    deleted_at    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS request_logs (
