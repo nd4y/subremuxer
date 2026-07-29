@@ -3025,6 +3025,18 @@ function helpBlock(block) {
   if (block.note) return h("p", { class: "help__note", text: block.note });
   if (block.warn) return h("p", { class: "help__warn", text: block.warn });
   if (block.demo === "filter") return filterDemo();
+  if (block.link) {
+    return h(
+      "p",
+      { class: "help__p" },
+      h("a", {
+        href: block.link.href,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        text: block.link.text,
+      })
+    );
+  }
 
   if (block.steps) {
     return h(

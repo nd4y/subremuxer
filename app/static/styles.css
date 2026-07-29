@@ -587,6 +587,16 @@ body.is-viewer .snackbar {
   color: var(--on-surface-variant);
 }
 
+a {
+  color: var(--primary);
+  text-underline-offset: 3px;
+}
+
+/* A link that looks like a button still has to lose the underline. */
+a.btn {
+  text-decoration: none;
+}
+
 /* ---------------------------------------------------------------- buttons */
 
 .btn {

@@ -4,7 +4,7 @@
  * elements from the app shell.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadApp, mountShell } from "./support/loadApp.js";
+import { loadApp, loadHelp, mountShell } from "./support/loadApp.js";
 
 let app;
 
@@ -108,6 +108,35 @@ describe("field builders", () => {
     input.checked = true;
     input.dispatchEvent(new window.Event("change"));
     expect(onChange).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("helpBlock", () => {
+  it("renders a link block as an anchor that cannot reach back into the app", () => {
+    const node = app.helpBlock({ link: { href: "https://example.org/repo", text: "repo" } });
+    const link = app.$("a", node);
+    expect(link.getAttribute("href")).toBe("https://example.org/repo");
+    expect(link.textContent).toBe("repo");
+    expect(link.getAttribute("target")).toBe("_blank");
+    // Without noopener the opened tab gets a handle on window.opener.
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("gives both roles a way to the project, since a viewer has no settings", () => {
+    loadHelp();
+    for (const sections of [window.HELP_SECTIONS, window.HELP_SECTIONS_VIEWER]) {
+      const blocks = sections.flatMap((section) => section.blocks);
+      const links = blocks.filter((block) => block.link).map((block) => block.link.href);
+      expect(links).toContain("https://github.com/nd4y/subremuxer");
+    }
+  });
+
+  it("settings carry the same link as a plain anchor, styled as a button", () => {
+    const link = document.getElementById("project-link");
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("https://github.com/nd4y/subremuxer");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(link.className).toContain("btn");
   });
 });
 

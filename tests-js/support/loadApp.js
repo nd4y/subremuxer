@@ -6,6 +6,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = path.join(here, "../../app/static");
 const APP_JS_SOURCE = fs.readFileSync(path.join(STATIC_DIR, "app.js"), "utf8");
 const INDEX_HTML = fs.readFileSync(path.join(STATIC_DIR, "index.html"), "utf8");
+const HELP_JS_SOURCE = fs.readFileSync(path.join(STATIC_DIR, "help.js"), "utf8");
 
 /**
  * app.js is a classic (non-module) script loaded via `<script src>` — that is
@@ -37,6 +38,15 @@ const EXPORT_NAMES = topLevelNames(APP_JS_SOURCE);
 export function loadApp() {
   const factory = new Function(`${APP_JS_SOURCE}\nreturn { ${EXPORT_NAMES.join(", ")} };`);
   return factory();
+}
+
+/**
+ * help.js is text rather than logic: it only assigns `window.HELP_SECTIONS` and
+ * `window.HELP_SECTIONS_VIEWER`. Running it makes the real help content
+ * available to tests instead of a fixture that could drift from it.
+ */
+export function loadHelp() {
+  new Function(HELP_JS_SOURCE)();
 }
 
 /** The real app shell markup, for functions that look up elements by id. */
