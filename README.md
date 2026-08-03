@@ -1,221 +1,227 @@
 # Sub Remuxer
 
-Фильтрующий прокси для подписок прокси-серверов.
+🇬🇧 **English** | [🇷🇺 Русский](README.ru.md)
 
-Отображаемое имя приложения — **Sub Remuxer**. Идентификаторы используют slug `subremuxer`:
-имя репозитория и docker-образа, файл базы, cookie сессии, поле `kind` в файлах конфигурации.
+A filtering proxy for proxy-server subscriptions.
 
-Приложение встаёт между вашим клиентом (Happ, v2RayTun, sing-box, Clash/Mihomo, v2rayN…)
-и панелью (Remnawave, Marzban, Marzneshin, 3x-ui, Hiddify — любой, кто отдаёт стандартные
-форматы подписки). Клиент ходит по ссылке Sub Remuxer, а он:
+The application's display name is **Sub Remuxer**. Identifiers use the `subremuxer` slug: the
+repository and docker image names, the database file, the session cookie, the `kind` field in
+configuration files.
 
-1. запрашивает исходную подписку, **подставляя нужный `x-hwid`** (и, при желании, остальные
-   заголовки устройства);
-2. разбирает ответ в том формате, в котором его отдала панель;
-3. **выкидывает лишние серверы** по регулярному выражению на имя и по списку протоколов;
-4. **собирает подписку обратно** в том же формате и отдаёт клиенту;
-5. **пишет в журнал** каждый запрос: что пришло, что и почему отфильтровано, что отдано.
+The app sits between your client (Happ, v2RayTun, sing-box, Clash/Mihomo, v2rayN…) and the panel
+(Remnawave, Marzban, Marzneshin, 3x-ui, Hiddify — anything that serves standard subscription
+formats). The client follows a Sub Remuxer link, and Sub Remuxer:
 
-<br>
-
-## Зачем это нужно
-
-* **Один HWID на все устройства.** Панель считает устройства по заголовку `x-hwid`.
-  Если задать один и тот же HWID, все ваши клиенты выглядят для панели как одно устройство —
-  лимит устройств перестаёт мешать.
-* **Только нужные серверы.** Подписка на 80 локаций превращается в подписку на 6 —
-  «всё, что содержит LTE и не содержит RU», без ручного редактирования конфигов.
-* **Без переделки клиента.** Клиент не знает, что между ним и панелью кто-то стоит:
-  формат ответа, заголовки `subscription-userinfo` / `profile-title` / `profile-update-interval`
-  и всё остальное проходят насквозь.
-* **Несколько панелей одной ссылкой.** Подписки от разных провайдеров объединяются в одну:
-  каждая фильтруется своими правилами и со своим HWID, а клиент получает общий список серверов
-  и не знает, что источников было пять.
+1. requests the original subscription, **substituting the required `x-hwid`** (and, if you want,
+   the rest of the device headers);
+2. parses the response in whatever format the panel served it;
+3. **drops the servers you don't want** by a regular expression over the name and by a protocol list;
+4. **reassembles the subscription** in the same format and hands it to the client;
+5. **logs** every request: what came in, what was filtered out and why, what was served.
 
 <br>
 
-## Как это работает
+## Why you would want this
 
-### Форматы
+* **One HWID for every device.** The panel counts devices by the `x-hwid` header. Set the same
+  HWID everywhere and all your clients look like a single device to the panel — the device limit
+  stops getting in the way.
+* **Only the servers you need.** A subscription with 80 locations turns into one with 6 —
+  "everything containing LTE and not containing RU" — without editing configs by hand.
+* **No changes on the client.** The client has no idea anyone is standing between it and the
+  panel: the response format, the `subscription-userinfo` / `profile-title` /
+  `profile-update-interval` headers and everything else pass straight through.
+* **Several panels behind one link.** Subscriptions from different providers are merged into one:
+  each is filtered by its own rules and with its own HWID, while the client receives a single
+  server list and never learns there were five sources.
 
-Подписка — не «формат Xray». Это универсальный контейнер, который панель отдаёт в одном
-из четырёх видов, выбирая его по заголовкам запроса (в первую очередь по `User-Agent`):
+<br>
 
-| Семейство | Что это | Как определяется |
+## How it works
+
+### Formats
+
+A subscription is not "the Xray format". It is a universal container that the panel serves in one
+of four shapes, chosen from the request headers (primarily the `User-Agent`):
+
+| Family | What it is | How it is detected |
 |---|---|---|
-| **Base64 / список URI** | строки `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `tuic://`… | тело целиком в base64 либо открытым текстом |
-| **Xray JSON** | либо массив полных конфигов с `remarks`, либо один конфиг с `outbounds` | JSON, у outbound'ов есть `protocol` |
-| **Sing-box JSON** | конфиг с `outbounds` (и `endpoints` начиная с 1.11) | JSON, у outbound'ов есть `type` |
-| **Clash / Mihomo / Stash** | YAML с `proxies` и `proxy-groups` | YAML с ключом `proxies` |
+| **Base64 / URI list** | `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `tuic://`… lines | the whole body in base64 or in plain text |
+| **Xray JSON** | either an array of full configs with `remarks`, or a single config with `outbounds` | JSON whose outbounds have a `protocol` |
+| **Sing-box JSON** | a config with `outbounds` (and `endpoints` since 1.11) | JSON whose outbounds have a `type` |
+| **Clash / Mihomo / Stash** | YAML with `proxies` and `proxy-groups` | YAML with a `proxies` key |
 
-Sub Remuxer **не конвертирует между семействами** — он прокидывает `User-Agent` и `Accept`
-клиента наверх, панель сама решает, чем ответить, а фильтрация происходит внутри
-полученного формата. Если нужно заставить панель отдать конкретное семейство, в профиле
-задаётся подменный `User-Agent` (есть готовые пресеты).
+Sub Remuxer **does not convert between families** — it forwards the client's `User-Agent` and
+`Accept` upstream, the panel decides what to answer with, and filtering happens inside the format
+that came back. If you need to force the panel into a particular family, set a substitute
+`User-Agent` in the profile (ready-made presets are included).
 
-Единственное исключение — переключение base64 ↔ открытый список: это один и тот же документ
-в разной обёртке, поэтому такое преобразование безопасно и вынесено в настройку профиля
-(и в query-параметр `?format=base64|plain` для отладки).
+The one exception is switching base64 ↔ plain list: that is the same document in a different
+wrapper, so the conversion is safe and is exposed as a profile setting (and as a
+`?format=base64|plain` query parameter for debugging).
 
-### Фильтрация без порчи конфига
+### Filtering without corrupting the config
 
-Парсеры принципиально **не пересобирают** узлы: исходное представление сохраняется как есть,
-фильтрация только удаляет записи. Поэтому подписка, прошедшая без фильтра,
-семантически идентична исходной — ни один клиент не сломается из-за особенностей
-сериализации.
+The parsers deliberately **do not rebuild** nodes: the original representation is kept as-is and
+filtering only removes entries. A subscription that passed through without a filter is therefore
+semantically identical to the original — no client will break over a serialisation quirk.
 
-Удаление узла — это не только удаление строки. Группы ссылаются на узлы по именам, и группа,
-оставшаяся пустой, ломает клиент. Поэтому удаление каскадируется:
+Removing a node is more than removing a line. Groups reference nodes by name, and a group left
+empty breaks the client. So removal cascades:
 
-* **sing-box** — имена вычищаются из `selector`/`urltest`, опустевшая группа удаляется, ссылки
-  на неё вычищаются дальше, `default` и `route.final` перенаправляются на живой тег;
-* **Clash** — то же для `proxy-groups`; правило, целившееся в удалённую группу, переписывается
-  на `DIRECT` (правила не выбрасываются молча); группа, живущая за счёт `use:` (provider),
-  сохраняется даже без собственных прокси;
-* **Xray** — правила `routing.rules`, указывающие на удалённый `outboundTag`, убираются,
-  селекторы балансировщиков подчищаются.
+* **sing-box** — names are cleaned out of `selector`/`urltest`, an emptied group is removed,
+  references to it are cleaned out further, and `default` and `route.final` are pointed at a live tag;
+* **Clash** — the same for `proxy-groups`; a rule that targeted a removed group is rewritten to
+  `DIRECT` (rules are never dropped silently); a group that lives off a `use:` (provider) is kept
+  even with no proxies of its own;
+* **Xray** — `routing.rules` entries pointing at a removed `outboundTag` are dropped and balancer
+  selectors are cleaned up.
 
-### Мимикрия
+### Mimicry
 
-Главный сценарий: подключить клиент, который сам не умеет отправлять HWID. Поэтому по умолчанию
-профиль создаётся с мимикрией **устройства** — панель видит Google Pixel 9 с вашим HWID.
+The main scenario is connecting a client that cannot send an HWID itself. That is why a profile is
+created with **device** mimicry by default — the panel sees a Google Pixel 9 carrying your HWID.
 
-Здесь важно не перепутать две разные вещи:
+Two different things must not be confused here:
 
-| Что подменяем | Чем управляет | Безопасно по умолчанию |
+| What is substituted | What it controls | Safe by default |
 |---|---|---|
-| `x-hwid`, `x-device-os`, `x-ver-os`, `x-device-model` | как панель считает и подписывает устройства | **да** — на формат ответа не влияет |
-| `User-Agent` | **какой формат подписки панель вернёт** | нет — включается осознанно |
+| `x-hwid`, `x-device-os`, `x-ver-os`, `x-device-model` | how the panel counts and attributes devices | **yes** — no effect on the response format |
+| `User-Agent` | **which subscription format the panel returns** | no — enable it deliberately |
 
-HWID работает **независимо от User-Agent**: панели достаточно заголовка `x-hwid`. А вот подмена
-User-Agent заставляет панель отвечать одним и тем же форматом всем клиентам — и клиент, который
-этот формат не читает, импортирует ноль серверов.
+The HWID works **independently of the User-Agent**: the `x-hwid` header is all the panel needs.
+Substituting the User-Agent, on the other hand, makes the panel answer every client with the same
+format — and a client that cannot read that format imports zero servers.
 
-Как это выглядит на практике: в профиле включена подмена на Happ, панель поэтому всем отдаёт
-массив Xray-JSON. Клиент вроде NekoBox читает только base64 — он импортирует пустой список,
-очищает уже сохранённые серверы и рвёт собственное соединение. При этом ни в журнале, ни в
-ответе панели ошибки нет: с точки зрения обеих сторон всё прошло успешно.
+What that looks like in practice: the profile has substitution to Happ enabled, so the panel serves
+an Xray-JSON array to everyone. A client like NekoBox reads base64 only — it imports an empty list,
+wipes the servers it had already saved and tears down its own connection. And neither the log nor
+the panel's response contains an error: as far as both sides are concerned, everything succeeded.
 
-Поэтому по умолчанию `User-Agent` клиента **прокидывается как есть**, и каждый клиент получает
-формат, который умеет читать. Подмена вынесена в отдельный список с предупреждением и нужна
-только тогда, когда формат хочется навязать намеренно — для этого есть и отдельные шаблоны
-«Заставить панель отдать …».
+That is why the client's `User-Agent` is **passed through unchanged** by default, and every client
+gets a format it can read. Substitution lives in a separate list behind a warning and is only
+needed when you want to impose a format on purpose — there are dedicated "make the panel serve …"
+templates for that.
 
-Устройства на выбор: Pixel 9 и 9 Pro, Galaxy S24 Ultra, Xiaomi 14, iPhone 16 Pro,
-iPhone 14 Pro Max, iPad Pro, ПК на Windows 11, Mac. Клиенты для подмены формата: Happ, v2RayTun,
-Streisand, sing-box, Karing, Hiddify, Clash Verge/Mihomo, FlClash, Stash, Shadowrocket, v2rayN,
-v2rayNG, Throne, браузер. Любое поле дописывается вручную.
+Devices to choose from: Pixel 9 and 9 Pro, Galaxy S24 Ultra, Xiaomi 14, iPhone 16 Pro,
+iPhone 14 Pro Max, iPad Pro, a Windows 11 PC, a Mac. Clients for format substitution: Happ,
+v2RayTun, Streisand, sing-box, Karing, Hiddify, Clash Verge/Mihomo, FlClash, Stash, Shadowrocket,
+v2rayN, v2rayNG, Throne, a browser. Any field can be typed in by hand.
 
 ### HWID
 
-Панель (Remnawave ≥ 2.9.0) принимает `x-hwid` длиной 10–64 символа из латиницы, цифр, `=` и `-`,
-иначе просто игнорирует заголовок. Админка подсвечивает несоответствие формата сразу при вводе.
+The panel (Remnawave ≥ 2.9.0) accepts an `x-hwid` of 10–64 characters made of Latin letters,
+digits, `=` and `-`, and simply ignores the header otherwise. The admin UI highlights a malformed
+value as you type.
 
-Три режима на профиль:
+Three modes, per profile:
 
-| Режим | Поведение |
+| Mode | Behaviour |
 |---|---|
-| **Подменять** (`override`) | всегда отправлять наш HWID, даже если клиент прислал свой |
-| **Добавлять** (`fallback`) | отправлять наш HWID только когда клиент не прислал свой |
-| **Не трогать** (`passthrough`) | прокидывать HWID клиента как есть |
+| **Override** (`override`) | always send our HWID, even if the client sent its own |
+| **Fallback** (`fallback`) | send our HWID only when the client sent none |
+| **Passthrough** (`passthrough`) | forward the client's HWID as-is |
 
-Дополнительно можно задать `x-device-os`, `x-ver-os`, `x-device-model` — глобально и/или на профиль.
+`x-device-os`, `x-ver-os` and `x-device-model` can be set as well — globally and/or per profile.
 
-### Сборки: несколько подписок в одной ссылке
+### Aggregates: several subscriptions behind one link
 
-Сборка объединяет несколько профилей под одним токеном. Источник остаётся обычным профилем —
-своя ссылка на панель, свой HWID, своя мимикрия, свой фильтр, своя кнопка «Тест», своя ссылка,
-если она нужна отдельно. Сборка добавляет только то, чего у профиля быть не может: параллельный
-обход всех источников и склейку того, что пережило их фильтры.
-
-```
-                  ┌── профиль «Панель A» ── свой HWID, свой фильтр ──▶ панель A
-клиент ──▶ сборка ─┼── профиль «Панель B» ── свой HWID, свой фильтр ──▶ панель B
-                  └── профиль «Панель C» ── выключен, пропущен
-                         │
-                         └─▶ один список серверов в формате первого источника
-```
-
-* **Порядок источников** в сборке — порядок серверов в итоговом списке.
-* **Подписи.** К имени каждого сервера добавляется метка источника через ` · ` — название
-  профиля или своя короткая подпись. Без неё одинаковые имена из разных панелей не различить,
-  а в Clash и sing-box имена ещё и обязаны быть уникальными: совпавшие получают «(2)».
-* **Дедупликация.** Сервер с тем же протоколом, адресом и портом попадает в список один раз.
-* **Группы и правила** первого источника переносятся в результат и перенастраиваются на общий
-  список: селектор, где были только его серверы, получит и серверы остальных панелей, а правило,
-  указывавшее на переименованный сервер, поедет за ним.
-* **Отказ одного источника не роняет сборку.** Пока ответил хоть кто-то, клиент получает
-  подписку, а причины по остальным попадают в журнал. Если не ответил никто — 502 с перечислением.
-
-Формат берётся у первого источника: приложение не переводит между семействами и здесь.
-Обычно все панели отвечают одинаково — они смотрят на User-Agent одного и того же клиента, —
-но источник, ответивший другим семейством, будет пропущен, и это будет видно в журнале.
-
-Одна загрузка сборки даёт в журнале несколько записей: по одной на источник — с его HWID
-и разбором по серверам — и одну сводную под именем сборки.
-
-### Захват данных клиента
-
-Чтобы не искать HWID в настройках приложения, есть отдельная ссылка-ловушка. Добавьте её
-в клиент как обычную подписку — приложение запишет `x-hwid`, модель и User-Agent, а клиенту
-вернёт эти же значения в названиях серверов, так что их видно прямо в его списке. Открытая
-в браузере, та же ссылка показывает человекочитаемую страницу.
-
-Захваченные устройства складываются в раздел «Захват»: повторные обращения не плодят записи,
-а увеличивают счётчик. Оттуда HWID подставляется в профиль выпадающим списком или копируется
-одной кнопкой. Ссылку можно перевыпустить.
-
-### Шаблоны
-
-Шаблон хранит всё, кроме названия профиля и ссылки на подписку: мимикрию, режим HWID, фильтр,
-протоколы, формат вывода. Новый профиль создаётся либо с нуля, либо из шаблона одним нажатием.
-Любой существующий профиль сохраняется в шаблон, шаблоны редактируются и удаляются.
-
-Встроенные, они же восстановимые в один клик: мимикрия устройства на Pixel 9 и на iPhone,
-Pixel 9 + только зарубежные, Pixel 9 + мобильные каналы, три шаблона «заставить панель отдать …»
-(Xray JSON, sing-box, Clash/Mihomo) и «без мимикрии вообще» как чистая отправная точка.
-
-### Редактор конфигурации
-
-Вся конфигурация — настройки, шаблоны и профили — доступна как один документ YAML или JSON
-во встроенном редакторе с подсветкой и нумерацией строк. Кнопка «Проверить» разбирает документ
-и показывает, что именно изменится, ничего не трогая; «Применить» приводит установку в точности
-к документу.
-
-Устройство применения:
-
-* документ **валидируется целиком** до первой записи — опечатка в последнем профиле не оставит
-  применённой первую половину;
-* профиль сопоставляется с существующим **по токену**, поэтому переименование не ломает уже
-  импортированную клиентами ссылку;
-* исчезнувшие из документа профили удаляются **мягко** и восстановимы сутки;
-* встроенные шаблоны сопоставляются по своему идентификатору, так что их можно переименовать,
-  не превращая в копию.
-
-Тот же документ выгружается файлом (YAML или JSON) и загружается обратно. Импорт, в отличие от
-редактора, только добавляет: существующие профили не трогаются, конфликтующие имена получают
-суффикс. Токены подписок по желанию сохраняются, чтобы уже розданные ссылки продолжили работать.
-
-**Файл конфигурации содержит токены подписок и HWID — храните его как секрет.**
-
-### Конструктор regexp
-
-Условия («содержит», «не содержит», «начинается с», «равно», «подходит под regexp», …)
-объединяются через И/ИЛИ и **компилируются в одно регулярное выражение**, которое тут же
-показывается в интерфейсе. Показанная регулярка — ровно та, что применяется к именам серверов,
-поэтому превью не может разойтись с реальным поведением:
+An aggregate merges several profiles under a single token. A source stays an ordinary profile —
+its own panel link, its own HWID, its own mimicry, its own filter, its own "Test" button, its own
+link if you want one separately. The aggregate only adds what a profile cannot have: a parallel
+walk over every source and the splicing of whatever survived their filters.
 
 ```
-содержит «LTE» + не содержит «RU»   →   (?i)^(?=.*LTE)(?!.*RU).*$
+                     ┌── profile "Panel A" ── own HWID, own filter ──▶ panel A
+client ──▶ aggregate ─┼── profile "Panel B" ── own HWID, own filter ──▶ panel B
+                     └── profile "Panel C" ── disabled, skipped
+                            │
+                            └─▶ one server list, in the first source's format
 ```
 
-Кнопка **Тест** ходит в реальную подписку и показывает список серверов с отметкой,
-что осталось, а что отброшено и по какой причине. Есть готовые шаблоны и режим «своя регулярка»
-с раздельными include/exclude.
+* **The order of sources** in the aggregate is the order of servers in the resulting list.
+* **Captions.** A source marker is appended to every server name via ` · ` — the profile name or a
+  short caption of your own. Without it, identical names from different panels are
+  indistinguishable, and in Clash and sing-box names must be unique on top of that: collisions get
+  a "(2)".
+* **Deduplication.** A server with the same protocol, address and port enters the list once.
+* **Groups and rules** of the first source are carried into the result and re-pointed at the
+  combined list: a selector that held only its own servers gets the other panels' servers too, and
+  a rule that pointed at a renamed server follows it.
+* **One failing source does not sink the aggregate.** As long as somebody answered, the client gets
+  a subscription and the reasons for the rest land in the log. If nobody answered — a 502 listing them.
+
+The format is taken from the first source: the app does not translate between families here either.
+Normally every panel answers the same way — they are all looking at the User-Agent of one and the
+same client — but a source that answered with a different family is skipped, and that is visible in
+the log.
+
+One aggregate fetch produces several log entries: one per source, with its HWID and a per-server
+breakdown, plus a summary one under the aggregate's name.
+
+### Capturing client data
+
+So you don't have to hunt for the HWID in the app's settings, there is a separate trap link. Add it
+to the client as an ordinary subscription — the app will record the `x-hwid`, the model and the
+User-Agent, and will return those very values to the client as server names, so they are visible
+right in its list. Opened in a browser, the same link shows a human-readable page.
+
+Captured devices are collected in the "Capture" section: repeat visits do not multiply records but
+increment a counter. From there the HWID goes into a profile via a dropdown, or is copied with one
+button. The link can be reissued.
+
+### Templates
+
+A template stores everything except the profile name and the subscription link: mimicry, HWID mode,
+filter, protocols, output format. A new profile is created either from scratch or from a template
+in one click. Any existing profile can be saved as a template, and templates can be edited and
+deleted.
+
+Built in, and restorable in one click: device mimicry as a Pixel 9 and as an iPhone, Pixel 9 +
+foreign locations only, Pixel 9 + mobile channels, three "make the panel serve …" templates (Xray
+JSON, sing-box, Clash/Mihomo) and "no mimicry at all" as a clean starting point.
+
+### Configuration editor
+
+The whole configuration — settings, templates and profiles — is available as a single YAML or JSON
+document in a built-in editor with highlighting and line numbers. The "Validate" button parses the
+document and shows exactly what would change, touching nothing; "Apply" brings the installation to
+exactly what the document says.
+
+How applying works:
+
+* the document is **validated as a whole** before the first write — a typo in the last profile will
+  not leave the first half applied;
+* a profile is matched to an existing one **by token**, so renaming does not break a link clients
+  have already imported;
+* profiles that disappeared from the document are deleted **softly** and are recoverable for a day;
+* built-in templates are matched by their own identifier, so they can be renamed without turning
+  into a copy.
+
+The same document can be exported as a file (YAML or JSON) and loaded back. Import, unlike the
+editor, only adds: existing profiles are untouched and conflicting names get a suffix. Subscription
+tokens are optionally preserved so that already distributed links keep working.
+
+**The configuration file contains subscription tokens and HWIDs — keep it as a secret.**
+
+### Regexp builder
+
+Conditions ("contains", "does not contain", "starts with", "equals", "matches regexp", …) are
+combined with AND/OR and **compiled into a single regular expression**, which is shown right there
+in the UI. The expression shown is exactly the one applied to server names, so the preview cannot
+diverge from the real behaviour:
+
+```
+contains "LTE" + does not contain "RU"   →   (?i)^(?=.*LTE)(?!.*RU).*$
+```
+
+The **Test** button goes to the real subscription and shows the list of servers marking what
+survived, what was dropped and for what reason. There are ready-made templates and a "custom
+regexp" mode with separate include/exclude.
 
 <br>
 
-## Быстрый старт
+## Quick start
 
 ### Docker
 
@@ -223,7 +229,7 @@ Pixel 9 + только зарубежные, Pixel 9 + мобильные кан
 docker run -d --name subremuxer -p 127.0.0.1:8000:8000 -e ADMIN_PASSWORD=... -e PUBLIC_BASE_URL=https://sub.example.org -v ./data:/data ghcr.io/nd4y/subremuxer:latest
 ```
 
-Или через compose:
+Or with compose:
 
 ```bash
 ADMIN_PASSWORD=... PUBLIC_BASE_URL=https://sub.example.org docker compose up -d
@@ -231,45 +237,45 @@ ADMIN_PASSWORD=... PUBLIC_BASE_URL=https://sub.example.org docker compose up -d
 
 ### Railway
 
-Репозиторий готов к развёртыванию как есть: `railway.json` указывает собирать `Dockerfile`
-и проверять живость по `/healthz`, а образ слушает порт из `$PORT`.
+The repository is ready to deploy as-is: `railway.json` tells it to build the `Dockerfile` and
+check liveness at `/healthz`, and the image listens on the port from `$PORT`.
 
-Что задать в переменных сервиса:
+What to set in the service's variables:
 
-| Переменная | Значение |
+| Variable | Value |
 |---|---|
-| `ADMIN_PASSWORD` | пароль админки (или `DEMO_MODE=true`, см. ниже) |
-| `PUBLIC_BASE_URL` | `https://<ваш-домен>.up.railway.app` — из него строятся ссылки на подписки |
+| `ADMIN_PASSWORD` | the admin password (or `DEMO_MODE=true`, see below) |
+| `PUBLIC_BASE_URL` | `https://<your-domain>.up.railway.app` — subscription links are built from it |
 | `COOKIE_SECURE` | `true` |
-| `DATA_DIR` | путь примонтированного тома, например `/data` |
-| `PORT` | тот же порт, что указан у домена сервиса (см. ниже) |
+| `DATA_DIR` | the mounted volume's path, e.g. `/data` |
+| `PORT` | the same port as the one set on the service's domain (see below) |
 
-**Про порт.** Railway подставляет свой `PORT` и маршрутизирует на порт, заданный у домена
-сервиса. Если эти два числа разойдутся, получится обманчивая картина: контейнер здоров и
-healthcheck проходит, а домен отдаёт 502 «Application failed to respond». Проще всего задать
-`PORT` явно и тем же числом, что стоит у домена.
+**About the port.** Railway injects its own `PORT` and routes to the port configured on the
+service's domain. If those two numbers diverge you get a deceptive picture: the container is
+healthy, the healthcheck passes, and the domain returns a 502 "Application failed to respond". The
+simplest fix is to set `PORT` explicitly, to the same number the domain uses.
 
-**Про том.** База SQLite лежит в `DATA_DIR`. Без примонтированного тома файловая система
-контейнера эфемерна и профили исчезнут при следующем деплое. Том надо смонтировать в тот же
-путь, что указан в `DATA_DIR`.
+**About the volume.** The SQLite database lives in `DATA_DIR`. Without a mounted volume the
+container's filesystem is ephemeral and the profiles will vanish on the next deploy. The volume
+must be mounted at exactly the path `DATA_DIR` points to.
 
-Инструкции `VOLUME` в `Dockerfile` нет и добавлять её не следует: Railway отклоняет такой
-Dockerfile, и сборка падает за несколько секунд до её начала с ошибкой
-`docker VOLUME is not supported, use Railway Volumes`. Тома задаются средствами платформы.
+There is no `VOLUME` instruction in the `Dockerfile` and none should be added: Railway rejects such
+a Dockerfile and the build fails seconds before it starts with
+`docker VOLUME is not supported, use Railway Volumes`. Volumes are configured through the platform.
 
-Права на том разруливаются сами: контейнер стартует от root ровно настолько, чтобы сделать
-каталог данных доступным пользователю `10001`, и сбрасывает привилегии до запуска приложения.
-Само приложение от root не работает никогда. Если контейнер уже запущен под непривилегированным
-пользователем, этот шаг пропускается, а при проблемах с правами приложение падает с явным
-сообщением, а не с загадочной ошибкой SQLite.
+Volume permissions sort themselves out: the container starts as root just long enough to make the
+data directory accessible to user `10001`, and drops privileges before launching the app. The app
+itself never runs as root. If the container is already running as an unprivileged user, that step
+is skipped, and on a permissions problem the app fails with an explicit message rather than a
+cryptic SQLite error.
 
-**Автодеплой.** Сервис привязывается к репозиторию в его настройках, и тогда пуш в выбранную
-ветку разворачивается сам. Стоит сразу включить там же **Wait for CI**: Railway дождётся
-workflow из `.github/workflows/`, и если тесты или сборка образа упали — деплой получит статус
-`SKIPPED` вместо того, чтобы вынести сломанный коммит на живой стенд. Условие у платформы одно:
-workflow должен запускаться по `push` в эту ветку — `ci.yml` так и настроен.
+**Auto-deploy.** The service is linked to the repository in its settings, and then a push to the
+chosen branch deploys itself. It is worth turning on **Wait for CI** right there: Railway will wait
+for the workflow from `.github/workflows/`, and if the tests or the image build failed, the deploy
+gets the `SKIPPED` status instead of carrying a broken commit onto a live stand. The platform has
+one condition: the workflow must be triggered by `push` to that branch — `ci.yml` is set up that way.
 
-### Локально
+### Locally
 
 ```bash
 pip install -e ".[dev]"
@@ -279,45 +285,46 @@ pip install -e ".[dev]"
 ADMIN_PASSWORD=dev uvicorn app.main:app --reload
 ```
 
-Админка — на корне (`/`), документация API — на `/api/docs`.
+The admin UI is at the root (`/`), the API documentation at `/api/docs`.
 
 <br>
 
-## Вход и роли
+## Sign-in and roles
 
-Войти можно двумя способами: мастер-паролем и через OpenID Connect. Пароль работает всегда,
-провайдер подключается по желанию; когда настроены оба, на экране входа появляются обе кнопки.
+There are two ways in: a master password and OpenID Connect. The password always works, the
+provider is optional; when both are configured, the sign-in screen shows both buttons.
 
-### Роли
+### Roles
 
-| Роль | Что видит и может |
+| Role | What it sees and can do |
 |---|---|
-| **Администратор** | всё: профили целиком, журнал, захват, шаблоны, редактор конфигурации, настройки |
-| **Читатель** (viewer) | только списки подписок и сборок: название, ссылка, QR-код и кнопки импорта в клиент |
+| **Administrator** | everything: whole profiles, the log, capture, templates, the configuration editor, settings |
+| **Viewer** | only the lists of subscriptions and aggregates: name, link, QR code and the import-into-client buttons |
 
-Читателю не показывают адрес исходной подписки, HWID, фильтр, настройки мимикрии и состав
-сборки — эти поля не прячутся в интерфейсе, а **вырезаются на сервере**, поэтому в браузер они
-не попадают вовсе. Всё, кроме чтения профилей и сборок, отвечает читателю `403`. У роли своя справка: как добавить ссылку
-в клиент, как отсканировать QR-код и что делать, если серверы не появились.
+A viewer is not shown the original subscription's address, the HWID, the filter, the mimicry
+settings or the aggregate's composition — these fields are not hidden in the UI but **stripped on
+the server**, so they never reach the browser at all. Everything except reading profiles and
+aggregates answers a viewer with `403`. The role has its own help: how to add the link to a client,
+how to scan the QR code and what to do if no servers showed up.
 
-Роль определяется членством в группах, которые приезжают в токене. Пользователь, попавший в обе
-группы, получает права администратора.
+The role is determined by membership in groups that arrive in the token. A user who lands in both
+groups gets administrator rights.
 
-### Настройка Keycloak
+### Setting up Keycloak
 
-1. Создайте клиента: **Client authentication** включена (confidential), **Standard flow**,
-   Valid redirect URI — `https://<ваш-домен>/auth/oidc/callback`.
-2. Заведите две группы, например `subremuxer_admins` и `subremuxer_viewers`.
-3. Добавьте в **Client scopes → \<клиент\>-dedicated** маппер типа **Group Membership**
-   с Token Claim Name `groups`. Снимите **Full group path**, либо оставьте — приложение
-   понимает оба написания и сравнивает по последнему сегменту пути.
+1. Create a client: **Client authentication** on (confidential), **Standard flow**, valid redirect
+   URI `https://<your-domain>/auth/oidc/callback`.
+2. Create two groups, e.g. `subremuxer_admins` and `subremuxer_viewers`.
+3. Add a **Group Membership** mapper with Token Claim Name `groups` under
+   **Client scopes → \<client\>-dedicated**. Clear **Full group path**, or leave it — the app
+   understands both spellings and compares by the last path segment.
 
-   Маппер на выделенном скоупе клиента работает для всех токенов сам по себе, и просить
-   группы отдельным scope не нужно. Более того, вредно: client scope с именем `groups`
-   в Keycloak не встроен, и запрос несуществующего scope обрывает вход целиком с ошибкой
-   `invalid_scope` — ещё до формы ввода пароля. Поэтому `OIDC_SCOPES` по умолчанию
-   ограничен `openid profile email`.
-4. Пропишите переменные:
+   A mapper on the client's dedicated scope works for all tokens by itself, and there is no need to
+   ask for groups as a separate scope. In fact it is harmful: a client scope named `groups` is not
+   built into Keycloak, and requesting a non-existent scope aborts the whole sign-in with
+   `invalid_scope` — before the password form even appears. That is why `OIDC_SCOPES` defaults to
+   `openid profile email`.
+4. Set the variables:
 
 ```bash
 OIDC_ISSUER=https://auth.example.org/realms/main
@@ -327,144 +334,144 @@ OIDC_ADMIN_GROUP=subremuxer_admins
 OIDC_VIEWER_GROUP=subremuxer_viewers
 ```
 
-Приложение проверяет `id_token` по JWKS провайдера: подпись, `iss`, `aud`, срок годности и
-`nonce`. Сам вход — authorization code с PKCE; начатая попытка входа хранится в базе, поэтому
-перезапуск между переходом к провайдеру и возвратом ничего не ломает.
+The app validates the `id_token` against the provider's JWKS: signature, `iss`, `aud`, expiry and
+`nonce`. Sign-in itself is authorization code with PKCE; a started attempt is stored in the
+database, so a restart between the redirect to the provider and the return breaks nothing.
 
-### Только провайдер
+### Provider only
 
-Как в Grafana, двумя независимыми флагами:
+Like Grafana, via two independent flags:
 
 ```bash
-OIDC_AUTO_LOGIN=true            # не показывать экран входа, сразу к провайдеру
-AUTH_DISABLE_LOGIN_FORM=true    # убрать вход по паролю совсем
+OIDC_AUTO_LOGIN=true            # skip the sign-in screen, go straight to the provider
+AUTH_DISABLE_LOGIN_FORM=true    # remove password sign-in entirely
 ```
 
-`OIDC_AUTO_LOGIN` убирает лишний экран: неавторизованный посетитель попадает прямо к провайдеру.
-`AUTH_DISABLE_LOGIN_FORM` — не косметика: эндпоинт `/api/auth/login` начинает отвечать `404`,
-и пароль перестаёт приниматься. Обе настройки игнорируются, если OIDC не настроен, — иначе
-установка осталась бы вообще без способа войти; в лог при этом пишется предупреждение.
+`OIDC_AUTO_LOGIN` removes an extra screen: an unauthenticated visitor lands directly at the
+provider. `AUTH_DISABLE_LOGIN_FORM` is not cosmetic: the `/api/auth/login` endpoint starts
+answering `404` and the password stops being accepted. Both settings are ignored if OIDC is not
+configured — otherwise the installation would be left with no way in at all; a warning is written
+to the log when that happens.
 
-### Если провайдер недоступен
+### If the provider is unreachable
 
-Сначала посмотрите в лог: на старте приложение само читает `.well-known` провайдера и громко
-сообщает, если тот не ответил. Дальше — по ситуации:
+Check the log first: at startup the app reads the provider's `.well-known` itself and complains
+loudly if it did not answer. After that, it depends:
 
-| Что случилось | Что делать |
+| What happened | What to do |
 |---|---|
-| Провайдер лежит, `AUTH_DISABLE_LOGIN_FORM` не выставлен | открыть `https://<домен>/?disableAutoLogin=true` и войти мастер-паролем — перезапуск не нужен |
-| Вход проходит, но роли нет | приложение покажет страницу с перечнем групп, которые реально пришли в токене, и claim, в котором их искали. Обычно этого хватает, чтобы поправить маппер |
-| `AUTH_DISABLE_LOGIN_FORM=true`, а провайдер недоступен | снять переменную и перезапустить контейнер |
+| The provider is down and `AUTH_DISABLE_LOGIN_FORM` is not set | open `https://<domain>/?disableAutoLogin=true` and sign in with the master password — no restart needed |
+| Sign-in works but there is no role | the app shows a page listing the groups that actually arrived in the token and the claim it looked for them in. That is usually enough to fix the mapper |
+| `AUTH_DISABLE_LOGIN_FORM=true` and the provider is unreachable | unset the variable and restart the container |
 
-Параметр `?disableAutoLogin=true` называется так же, как в Grafana, и делает то же самое:
-отключает автоматический переход к провайдеру для текущей вкладки. Выход из приложения ставит
-тот же признак — иначе кнопка «Выйти» при включённом автовходе возвращала бы ту же сессию.
+The `?disableAutoLogin=true` parameter is named after Grafana's and does the same thing: it
+disables the automatic redirect to the provider for the current tab. Signing out sets the same flag —
+otherwise, with auto-login on, the "Sign out" button would return the same session.
 
-Аварийный вход мастер-паролем при настроенном провайдере пишется в лог отдельным
-предупреждением: это событие, которое должно быть заметно.
-
-<br>
-
-## Настройки окружения
-
-| Переменная | По умолчанию | Назначение |
-|---|---|---|
-| `ADMIN_PASSWORD` | *генерируется* | пароль админки. Если не задан — генерируется случайный и один раз пишется в лог |
-| `AUTH_DISABLE_LOGIN_FORM` | `false` | убирает вход по паролю — и кнопку, и сам эндпоинт. Игнорируется, если OIDC не настроен |
-| `DEMO_MODE` | `false` | **отключает вход в админку целиком.** Только для публичных демо-стендов |
-| `OIDC_ISSUER` | — | адрес realm'а, например `https://auth.example.org/realms/main`. Задан вместе с `OIDC_CLIENT_ID` — вход через провайдера включён |
-| `OIDC_CLIENT_ID` | — | идентификатор клиента |
-| `OIDC_CLIENT_SECRET` | — | секрет клиента. Пусто — клиент публичный, вход идёт только на PKCE |
-| `OIDC_ADMIN_GROUP` | — | группа, дающая права администратора |
-| `OIDC_VIEWER_GROUP` | — | группа, дающая права читателя |
-| `OIDC_GROUPS_CLAIM` | `groups` | claim, в котором приезжает членство в группах |
-| `OIDC_SCOPES` | `openid profile email` | запрашиваемые scope. Группы сюда добавлять не нужно — см. ниже |
-| `OIDC_AUTO_LOGIN` | `false` | пропускать экран входа и сразу отправлять к провайдеру |
-| `OIDC_DISPLAY_NAME` | `OIDC` | подпись на кнопке входа |
-| `OIDC_REDIRECT_URL` | из `PUBLIC_BASE_URL` | адрес колбэка, если приложение не видит собственный внешний адрес |
-| `OIDC_VERIFY_TLS` | `true` | проверять сертификат провайдера |
-| `DATA_DIR` | `./data` (`/data` в образе) | каталог с SQLite-базой |
-| `PUBLIC_BASE_URL` | из запроса | origin для ссылок на подписку и QR-кодов |
-| `COOKIE_SECURE` | `false` | ставьте `true`, когда админка за HTTPS |
-| `SESSION_TTL_HOURS` | `336` | время жизни сессии админки |
-| `TRUST_FORWARDED_FOR` | `true` | брать IP клиента из `X-Forwarded-For` |
-| `UPSTREAM_TIMEOUT` | `20` | таймаут запроса к панели, секунды |
-| `UPSTREAM_MAX_BYTES` | `8388608` | максимальный размер ответа панели |
-| `UPSTREAM_PROXY` | — | HTTP/SOCKS-прокси для запросов к панели |
-| `UPSTREAM_VERIFY_TLS` | `true` | проверять сертификат панели |
-| `LOG_LEVEL` | `INFO` | подробность собственного лога приложения. На `INFO` видно проверки при старте — ответил ли провайдер OIDC |
-| `LOG_RETENTION_DAYS` | `30` | хранение журнала, дней (`0` — не чистить по времени) |
-| `LOG_MAX_ROWS` | `20000` | максимум записей в журнале |
+An emergency master-password sign-in while a provider is configured is written to the log as a
+separate warning: it is an event that should be noticeable.
 
 <br>
 
-## Эндпоинты
+## Environment settings
 
-| Метод | Путь | Назначение |
+| Variable | Default | Purpose |
 |---|---|---|
-| `GET` | `/s/{token}` | **публичная ссылка на подписку** — её и вставляют в клиент; токен принадлежит либо профилю, либо сборке |
-| `GET` | `/s/{token}/{любой-суффикс}` | то же самое; суффикс игнорируется (некоторые клиенты дописывают имя файла) |
-| `GET` | `/probe/{token}` | **ссылка-ловушка для захвата** данных клиента |
-| `GET` | `/auth/oidc/login` | начало входа через провайдера |
-| `GET` | `/auth/oidc/callback` | возврат от провайдера |
-| `GET` | `/healthz` | health-check |
+| `ADMIN_PASSWORD` | *generated* | the admin password. If unset, a random one is generated and written to the log once |
+| `AUTH_DISABLE_LOGIN_FORM` | `false` | removes password sign-in — both the button and the endpoint. Ignored if OIDC is not configured |
+| `DEMO_MODE` | `false` | **disables admin sign-in entirely.** For public demo stands only |
+| `OIDC_ISSUER` | — | the realm address, e.g. `https://auth.example.org/realms/main`. Set together with `OIDC_CLIENT_ID`, it enables provider sign-in |
+| `OIDC_CLIENT_ID` | — | the client identifier |
+| `OIDC_CLIENT_SECRET` | — | the client secret. Empty means a public client and PKCE-only sign-in |
+| `OIDC_ADMIN_GROUP` | — | the group granting administrator rights |
+| `OIDC_VIEWER_GROUP` | — | the group granting viewer rights |
+| `OIDC_GROUPS_CLAIM` | `groups` | the claim carrying group membership |
+| `OIDC_SCOPES` | `openid profile email` | the requested scopes. Groups need not be added here — see above |
+| `OIDC_AUTO_LOGIN` | `false` | skip the sign-in screen and go straight to the provider |
+| `OIDC_DISPLAY_NAME` | `OIDC` | the label on the sign-in button |
+| `OIDC_REDIRECT_URL` | from `PUBLIC_BASE_URL` | the callback address, if the app cannot see its own external address |
+| `OIDC_VERIFY_TLS` | `true` | verify the provider's certificate |
+| `DATA_DIR` | `./data` (`/data` in the image) | the directory holding the SQLite database |
+| `PUBLIC_BASE_URL` | from the request | the origin for subscription links and QR codes |
+| `COOKIE_SECURE` | `false` | set `true` when the admin UI is behind HTTPS |
+| `SESSION_TTL_HOURS` | `336` | admin session lifetime |
+| `TRUST_FORWARDED_FOR` | `true` | take the client IP from `X-Forwarded-For` |
+| `UPSTREAM_TIMEOUT` | `20` | timeout for the request to the panel, seconds |
+| `UPSTREAM_MAX_BYTES` | `8388608` | maximum size of the panel's response |
+| `UPSTREAM_PROXY` | — | HTTP/SOCKS proxy for requests to the panel |
+| `UPSTREAM_VERIFY_TLS` | `true` | verify the panel's certificate |
+| `LOG_LEVEL` | `INFO` | verbosity of the app's own log. At `INFO` the startup checks are visible — whether the OIDC provider answered |
+| `LOG_RETENTION_DAYS` | `30` | log retention, days (`0` — do not purge by time) |
+| `LOG_MAX_ROWS` | `20000` | maximum number of log records |
+
+<br>
+
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/s/{token}` | **the public subscription link** — this is what goes into the client; the token belongs either to a profile or to an aggregate |
+| `GET` | `/s/{token}/{any-suffix}` | the same; the suffix is ignored (some clients append a file name) |
+| `GET` | `/probe/{token}` | **the trap link** for capturing client data |
+| `GET` | `/auth/oidc/login` | start of provider sign-in |
+| `GET` | `/auth/oidc/callback` | return from the provider |
+| `GET` | `/healthz` | health check |
 | `GET` | `/api/docs` | Swagger |
 
-Служебные, за сессией администратора: `/api/config` (чтение, `/validate`, применение),
-`/api/export`, `/api/import`, `/api/templates`, `/api/aggregates`, `/api/probe`, `/api/filter/test`.
-Читателю доступны только `GET /api/profiles`, `GET /api/aggregates`, записи по одной
-и QR-коды к ним — в урезанном виде, без адреса панели, состава сборки и настроек.
+Internal, behind an administrator session: `/api/config` (read, `/validate`, apply), `/api/export`,
+`/api/import`, `/api/templates`, `/api/aggregates`, `/api/probe`, `/api/filter/test`. A viewer only
+gets `GET /api/profiles`, `GET /api/aggregates`, individual records and their QR codes — in a
+trimmed form, without the panel address, the aggregate's composition or the settings.
 
-Публичная ссылка отвечает `404` и для несуществующего токена, и для выключенного профиля или
-выключенной сборки — по ответу нельзя перебором узнать, какие токены существуют. Выключенный
-профиль вообще не обращается к панели.
-
-<br>
-
-## Интерфейс
-
-Material 3 Expressive, без сборочного шага и без внешних шрифтов: один HTML, один CSS,
-два JS (приложение и текст справки). Светлая и тёмная темы, системная по умолчанию.
-
-Внутри — подробная справка с примерами: как устроено проксирование, чем мимикрия устройства
-отличается от подмены формата, конструктор фильтра с живой песочницей на настоящем эндпоинте
-проверки, форматы подписок, чтение журнала и разбор частых проблем. Открывается значком «?»
-в шапке на любой вкладке. Последняя секция справки ведёт сюда, на GitHub — у читателя это
-единственный способ найти проект, потому что настройки ему недоступны; администратору та же
-ссылка видна в настройках, в карточке «О приложении».
-
-**Ставится как приложение.** Манифест, иконки и service worker на месте: на Android и десктопе
-Chrome/Edge предложат установку (кнопка есть и в настройках), на iOS — «На экран „Домой“».
-Оболочка кэшируется и открывается офлайн. Установка требует HTTPS — по http:// приложение
-работает целиком, но ярлык браузер создать не даст.
-
-Адреса `app.js`, `help.js` и `styles.css` несут хэш содержимого, а сама страница отдаётся
-с `no-cache`, поэтому после обновления контейнера браузер не может остаться на старой версии.
-
-Удаление профиля или сборки не спрашивает подтверждения: действие сразу обратимо, поэтому
-вместо диалога появляется снекбар с кнопкой «Отменить» и круговым обратным отсчётом — так это
-описано в рекомендациях Material 3. За пределами этого окна запись остаётся восстановимой
-ещё сутки.
-
-В окне со ссылкой на подписку операционная система определяется автоматически по браузеру,
-но её можно переключить вручную — под каждую показываются кнопки импорта в конкретные клиенты.
-
-Разделов пять: «Профили», «Сборки», «Захват», «Логи», «Настройки». Читателю видны первые два —
-остальные скрыты в интерфейсе и закрыты на сервере.
-
-* **Десктоп** — navigation rail слева, диалоги по центру, сетка профилей в две колонки на широких экранах.
-* **Мобильный** — нижняя навигация, bottom sheet с перетаскиванием вниз для закрытия,
-  учёт `safe-area-inset` под вырезы и жестовую полосу, тач-таргеты не меньше 48 px,
-  поля ввода 16 px (iOS не зумит вьюпорт), `overscroll-behavior: contain` в прокручиваемых
-  областях, `content-visibility` на длинных списках. Жест «назад» закрывает открытый лист,
-  а не выходит из приложения, и делает это через `CloseWatcher` — поэтому на новых версиях
-  Android система показывает предпросмотр жеста. Там, где `CloseWatcher` нет, работает
-  запасной вариант на записи в истории, без предпросмотра.
-* `prefers-reduced-motion` и `prefers-contrast` учитываются.
+The public link answers `404` both for a non-existent token and for a disabled profile or aggregate —
+the response cannot be used to enumerate which tokens exist. A disabled profile never contacts the
+panel at all.
 
 <br>
 
-## Разработка
+## Interface
+
+Material 3 Expressive, with no build step and no external fonts: one HTML, one CSS, two JS files
+(the app and the help text). Light and dark themes, system by default.
+
+Inside is detailed help with examples: how the proxying works, how device mimicry differs from
+format substitution, the filter builder with a live sandbox against the real test endpoint, the
+subscription formats, reading the log and troubleshooting common problems. It opens from the "?"
+icon in the header on any tab. The last help section links here, to GitHub — for a viewer that is
+the only way to find the project, since settings are out of reach; an administrator sees the same
+link in settings, in the "About" card.
+
+**Installable as an app.** The manifest, icons and service worker are in place: on Android and on
+desktop Chrome/Edge will offer to install it (there is a button in settings too), on iOS it is "Add
+to Home Screen". The shell is cached and opens offline. Installation requires HTTPS — over http://
+the app works in full, but the browser will not create a shortcut.
+
+The addresses of `app.js`, `help.js` and `styles.css` carry a content hash, and the page itself is
+served with `no-cache`, so after a container update the browser cannot get stuck on an old version.
+
+Deleting a profile or an aggregate does not ask for confirmation: the action is immediately
+reversible, so instead of a dialog a snackbar appears with an "Undo" button and a circular
+countdown — exactly as the Material 3 guidelines describe it. Beyond that window the record stays
+recoverable for another day.
+
+In the subscription link dialog the operating system is detected automatically from the browser but
+can be switched by hand — each one shows import buttons for its specific clients.
+
+There are five sections: "Profiles", "Aggregates", "Capture", "Logs", "Settings". A viewer sees the
+first two — the rest are hidden in the UI and closed on the server.
+
+* **Desktop** — a navigation rail on the left, centred dialogs, a two-column profile grid on wide screens.
+* **Mobile** — bottom navigation, a bottom sheet that closes by dragging down, `safe-area-inset`
+  accounted for around notches and the gesture bar, touch targets no smaller than 48 px, 16 px input
+  fields (so iOS does not zoom the viewport), `overscroll-behavior: contain` in scrollable areas,
+  `content-visibility` on long lists. The back gesture closes an open sheet rather than leaving the
+  app, and does so through `CloseWatcher` — which is why recent Android versions show a gesture
+  preview. Where `CloseWatcher` is missing, a history-entry fallback works without the preview.
+* `prefers-reduced-motion` and `prefers-contrast` are honoured.
+
+<br>
+
+## Development
 
 ```bash
 pytest -q
@@ -474,62 +481,63 @@ pytest -q
 ruff check .
 ```
 
-Тесты покрывают разбор и пересборку всех четырёх семейств форматов (включая каскадное
-удаление групп), компилятор конструктора условий, фильтр по протоколам, три режима HWID,
-проброс заголовков, сквозной путь запроса клиента с подставным апстримом, авторизацию,
-журналирование, пресеты мимикрии, захват данных клиента, шаблоны, клонирование, мягкое
-удаление с восстановлением, экспорт/импорт и цикл «проверить — применить» в редакторе
-конфигурации. Отдельный набор — сборки: слияние в каждом семействе форматов с перенастройкой
-групп и правил, дедупликация, подписи источников, поведение при недоступном источнике и при
-источнике, ответившем чужим форматом. Отдельный тест сверяет генератор regexp в браузере с серверным — чтобы превью
-в админке не разошлось с реальным поведением.
+The tests cover parsing and reassembly of all four format families (including cascading group
+removal), the condition builder's compiler, the protocol filter, all three HWID modes, header
+forwarding, the end-to-end client request path against a stub upstream, authorisation, logging,
+mimicry presets, client data capture, templates, cloning, soft deletion with restore, export/import
+and the "validate — apply" cycle in the configuration editor. A separate suite covers aggregates:
+merging within each format family with groups and rules re-pointed, deduplication, source captions,
+behaviour with an unreachable source and with a source that answered in a foreign format. A separate
+test compares the browser's regexp generator against the server's — so that the preview in the admin
+UI cannot diverge from the real behaviour.
 
-Фронтенд (`app/static/app.js`) — обычный скрипт без сборки, но со своими тестами на Vitest:
+The frontend (`app/static/app.js`) is a plain script with no build step, but with its own Vitest
+tests:
 
 ```bash
 npm install
 npm test
 ```
 
-`app.js` не экспортирует ничего явно — тестовый загрузчик (`tests-js/support/loadApp.js`)
-подхватывает каждое верхнеуровневое имя автоматически, так что новая функция становится
-тестируемой сразу, без ручного списка экспортов. Тесты покрывают генератор regexp,
-определение ОС и хоста, подсветку синтаксиса, разрешение сессии по 401, экран входа,
-переключение ролей admin/viewer (включая то, что реально видит читатель в карточке) и
-редактор сборок: порядок источников, выбор из свободных профилей, удалённый источник.
+`app.js` exports nothing explicitly — the test loader (`tests-js/support/loadApp.js`) picks up every
+top-level name automatically, so a new function becomes testable immediately, with no manual export
+list. The tests cover the regexp generator, OS and host detection, syntax highlighting, session
+resolution on a 401, the sign-in screen, admin/viewer role switching (including what a viewer really
+sees on a card) and the aggregate editor: source order, picking from unused profiles, a deleted
+source.
 
 <br>
 
-## Безопасность
+## Security
 
-* Пароль администратора один, сессии серверные, cookie `HttpOnly`/`SameSite=Lax`;
-  включайте `COOKIE_SECURE=true` за HTTPS.
-* Вход через провайдера — authorization code с PKCE. `id_token` проверяется по JWKS: подпись,
-  издатель, аудитория, срок годности и `nonce`, который привязывает токен к конкретной попытке
-  входа. Начатая попытка одноразовая: `state` удаляется при первом же использовании, поэтому
-  утёкший адрес колбэка нельзя предъявить повторно. Параметр `next` принимается только
-  относительный — открытый редирект на странице входа как раз и придаёт фишинговой ссылке
-  убедительность.
-* Права читателя урезаются на сервере, а не в интерфейсе: адрес панели, HWID и фильтры не
-  попадают в ответ API, поэтому их нельзя достать из браузера в обход интерфейса.
-* `DEMO_MODE=true` **убирает вход целиком**: любой, кто откроет приложение, сможет менять
-  профили, читать журнал и выгружать конфигурацию вместе с токенами подписок. Режим заявляет
-  о себе предупреждением в логе при старте и несъёмной плашкой в интерфейсе. Чтобы демо-стенд
-  нельзя было использовать как открытый прокси во внутреннюю сеть его собственного хоста,
-  в этом режиме запрещены апстримы, чьи имена разрешаются в приватные, loopback- и служебные
-  адреса. Не включайте его там, где лежат настоящие подписки.
-* Подбор пароля ограничен: 10 неудачных попыток с адреса за 5 минут — и вход блокируется.
-* Наверх уходит только белый список заголовков запроса, вниз — только белый список заголовков
-  ответа: `Set-Cookie` панели, её `Server` и прочее до клиента не доходят.
-* Ссылку на подписку можно перевыпустить в один клик — старая мгновенно перестаёт работать.
-* Адрес исходной подписки задаёт администратор, и он ничем не ограничен: панель часто живёт
-  во внутренней сети, и запрет на внутренние адреса сломал бы обычный сценарий
-  самостоятельного размещения. Поэтому доступ к админке равносилен праву заставить сервер
-  сходить по произвольному адресу — не давайте его тем, кому не доверяете. Исключение —
-  `DEMO_MODE`, где такой запрет как раз действует.
+* There is a single administrator password, sessions are server-side, and the cookie is
+  `HttpOnly`/`SameSite=Lax`; turn on `COOKIE_SECURE=true` behind HTTPS.
+* Provider sign-in is authorization code with PKCE. The `id_token` is validated against the JWKS:
+  signature, issuer, audience, expiry and the `nonce` that binds the token to one specific sign-in
+  attempt. A started attempt is single-use: the `state` is deleted on first use, so a leaked
+  callback address cannot be replayed. The `next` parameter is only accepted as a relative one — an
+  open redirect on a sign-in page is exactly what makes a phishing link convincing.
+* Viewer rights are trimmed on the server, not in the UI: the panel address, HWIDs and filters never
+  enter the API response, so they cannot be pulled out of the browser around the interface.
+* `DEMO_MODE=true` **removes sign-in entirely**: anyone who opens the app can change profiles, read
+  the log and export the configuration along with the subscription tokens. The mode announces itself
+  with a warning in the log at startup and an unremovable banner in the UI. So that a demo stand
+  cannot be used as an open proxy into its own host's internal network, this mode forbids upstreams
+  whose names resolve to private, loopback and special-use addresses. Do not enable it where real
+  subscriptions live.
+* Password guessing is rate-limited: 10 failed attempts from an address within 5 minutes and
+  sign-in is blocked.
+* Only an allow-list of request headers goes upstream and only an allow-list of response headers
+  comes back down: the panel's `Set-Cookie`, its `Server` and the rest never reach the client.
+* A subscription link can be reissued in one click — the old one stops working instantly.
+* The original subscription's address is set by the administrator and is not restricted in any way:
+  the panel often lives on an internal network, and banning internal addresses would break the
+  ordinary self-hosting scenario. Access to the admin UI is therefore equivalent to the right to
+  make the server fetch an arbitrary address — do not hand it to people you do not trust. The
+  exception is `DEMO_MODE`, where that ban is in force.
 
 <br>
 
-## Лицензия
+## License
 
 MIT.
