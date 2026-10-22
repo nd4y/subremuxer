@@ -23,15 +23,15 @@ formats). The client follows a Sub Remuxer link, and Sub Remuxer:
 
 ## Why you would want this
 
-* **One HWID for every device.** The panel counts devices by the `x-hwid` header. Set the same
+- **One HWID for every device.** The panel counts devices by the `x-hwid` header. Set the same
   HWID everywhere and all your clients look like a single device to the panel — the device limit
   stops getting in the way.
-* **Only the servers you need.** A subscription with 80 locations turns into one with 6 —
+- **Only the servers you need.** A subscription with 80 locations turns into one with 6 —
   "everything containing LTE and not containing RU" — without editing configs by hand.
-* **No changes on the client.** The client has no idea anyone is standing between it and the
+- **No changes on the client.** The client has no idea anyone is standing between it and the
   panel: the response format, the `subscription-userinfo` / `profile-title` /
   `profile-update-interval` headers and everything else pass straight through.
-* **Several panels behind one link.** Subscriptions from different providers are merged into one:
+- **Several panels behind one link.** Subscriptions from different providers are merged into one:
   each is filtered by its own rules and with its own HWID, while the client receives a single
   server list and never learns there were five sources.
 
@@ -44,12 +44,12 @@ formats). The client follows a Sub Remuxer link, and Sub Remuxer:
 A subscription is not "the Xray format". It is a universal container that the panel serves in one
 of four shapes, chosen from the request headers (primarily the `User-Agent`):
 
-| Family | What it is | How it is detected |
-|---|---|---|
-| **Base64 / URI list** | `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `tuic://`… lines | the whole body in base64 or in plain text |
-| **Xray JSON** | either an array of full configs with `remarks`, or a single config with `outbounds` | JSON whose outbounds have a `protocol` |
-| **Sing-box JSON** | a config with `outbounds` (and `endpoints` since 1.11) | JSON whose outbounds have a `type` |
-| **Clash / Mihomo / Stash** | YAML with `proxies` and `proxy-groups` | YAML with a `proxies` key |
+| Family                     | What it is                                                                          | How it is detected                        |
+| -------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------- |
+| **Base64 / URI list**      | `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `tuic://`… lines      | the whole body in base64 or in plain text |
+| **Xray JSON**              | either an array of full configs with `remarks`, or a single config with `outbounds` | JSON whose outbounds have a `protocol`    |
+| **Sing-box JSON**          | a config with `outbounds` (and `endpoints` since 1.11)                              | JSON whose outbounds have a `type`        |
+| **Clash / Mihomo / Stash** | YAML with `proxies` and `proxy-groups`                                              | YAML with a `proxies` key                 |
 
 Sub Remuxer **does not convert between families** — it forwards the client's `User-Agent` and
 `Accept` upstream, the panel decides what to answer with, and filtering happens inside the format
@@ -69,12 +69,12 @@ semantically identical to the original — no client will break over a serialisa
 Removing a node is more than removing a line. Groups reference nodes by name, and a group left
 empty breaks the client. So removal cascades:
 
-* **sing-box** — names are cleaned out of `selector`/`urltest`, an emptied group is removed,
+- **sing-box** — names are cleaned out of `selector`/`urltest`, an emptied group is removed,
   references to it are cleaned out further, and `default` and `route.final` are pointed at a live tag;
-* **Clash** — the same for `proxy-groups`; a rule that targeted a removed group is rewritten to
+- **Clash** — the same for `proxy-groups`; a rule that targeted a removed group is rewritten to
   `DIRECT` (rules are never dropped silently); a group that lives off a `use:` (provider) is kept
   even with no proxies of its own;
-* **Xray** — `routing.rules` entries pointing at a removed `outboundTag` are dropped and balancer
+- **Xray** — `routing.rules` entries pointing at a removed `outboundTag` are dropped and balancer
   selectors are cleaned up.
 
 ### Mimicry
@@ -84,10 +84,10 @@ created with **device** mimicry by default — the panel sees a Google Pixel 9 c
 
 Two different things must not be confused here:
 
-| What is substituted | What it controls | Safe by default |
-|---|---|---|
-| `x-hwid`, `x-device-os`, `x-ver-os`, `x-device-model` | how the panel counts and attributes devices | **yes** — no effect on the response format |
-| `User-Agent` | **which subscription format the panel returns** | no — enable it deliberately |
+| What is substituted                                   | What it controls                                | Safe by default                            |
+| ----------------------------------------------------- | ----------------------------------------------- | ------------------------------------------ |
+| `x-hwid`, `x-device-os`, `x-ver-os`, `x-device-model` | how the panel counts and attributes devices     | **yes** — no effect on the response format |
+| `User-Agent`                                          | **which subscription format the panel returns** | no — enable it deliberately                |
 
 The HWID works **independently of the User-Agent**: the `x-hwid` header is all the panel needs.
 Substituting the User-Agent, on the other hand, makes the panel answer every client with the same
@@ -116,11 +116,11 @@ value as you type.
 
 Three modes, per profile:
 
-| Mode | Behaviour |
-|---|---|
-| **Override** (`override`) | always send our HWID, even if the client sent its own |
-| **Fallback** (`fallback`) | send our HWID only when the client sent none |
-| **Passthrough** (`passthrough`) | forward the client's HWID as-is |
+| Mode                            | Behaviour                                             |
+| ------------------------------- | ----------------------------------------------------- |
+| **Override** (`override`)       | always send our HWID, even if the client sent its own |
+| **Fallback** (`fallback`)       | send our HWID only when the client sent none          |
+| **Passthrough** (`passthrough`) | forward the client's HWID as-is                       |
 
 `x-device-os`, `x-ver-os` and `x-device-model` can be set as well — globally and/or per profile.
 
@@ -139,16 +139,16 @@ client ──▶ aggregate ─┼── profile "Panel B" ── own HWID, own f
                             └─▶ one server list, in the first source's format
 ```
 
-* **The order of sources** in the aggregate is the order of servers in the resulting list.
-* **Captions.** A source marker is appended to every server name via ` · ` — the profile name or a
+- **The order of sources** in the aggregate is the order of servers in the resulting list.
+- **Captions.** A source marker is appended to every server name via `·` — the profile name or a
   short caption of your own. Without it, identical names from different panels are
   indistinguishable, and in Clash and sing-box names must be unique on top of that: collisions get
   a "(2)".
-* **Deduplication.** A server with the same protocol, address and port enters the list once.
-* **Groups and rules** of the first source are carried into the result and re-pointed at the
+- **Deduplication.** A server with the same protocol, address and port enters the list once.
+- **Groups and rules** of the first source are carried into the result and re-pointed at the
   combined list: a selector that held only its own servers gets the other panels' servers too, and
   a rule that pointed at a renamed server follows it.
-* **One failing source does not sink the aggregate.** As long as somebody answered, the client gets
+- **One failing source does not sink the aggregate.** As long as somebody answered, the client gets
   a subscription and the reasons for the rest land in the log. If nobody answered — a 502 listing them.
 
 The format is taken from the first source: the app does not translate between families here either.
@@ -190,12 +190,12 @@ exactly what the document says.
 
 How applying works:
 
-* the document is **validated as a whole** before the first write — a typo in the last profile will
+- the document is **validated as a whole** before the first write — a typo in the last profile will
   not leave the first half applied;
-* a profile is matched to an existing one **by token**, so renaming does not break a link clients
+- a profile is matched to an existing one **by token**, so renaming does not break a link clients
   have already imported;
-* profiles that disappeared from the document are deleted **softly** and are recoverable for a day;
-* built-in templates are matched by their own identifier, so they can be renamed without turning
+- profiles that disappeared from the document are deleted **softly** and are recoverable for a day;
+- built-in templates are matched by their own identifier, so they can be renamed without turning
   into a copy.
 
 The same document can be exported as a file (YAML or JSON) and loaded back. Import, unlike the
@@ -242,13 +242,13 @@ check liveness at `/healthz`, and the image listens on the port from `$PORT`.
 
 What to set in the service's variables:
 
-| Variable | Value |
-|---|---|
-| `ADMIN_PASSWORD` | the admin password (or `DEMO_MODE=true`, see below) |
+| Variable          | Value                                                                         |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `ADMIN_PASSWORD`  | the admin password (or `DEMO_MODE=true`, see below)                           |
 | `PUBLIC_BASE_URL` | `https://<your-domain>.up.railway.app` — subscription links are built from it |
-| `COOKIE_SECURE` | `true` |
-| `DATA_DIR` | the mounted volume's path, e.g. `/data` |
-| `PORT` | the same port as the one set on the service's domain (see below) |
+| `COOKIE_SECURE`   | `true`                                                                        |
+| `DATA_DIR`        | the mounted volume's path, e.g. `/data`                                       |
+| `PORT`            | the same port as the one set on the service's domain (see below)              |
 
 **About the port.** Railway injects its own `PORT` and routes to the port configured on the
 service's domain. If those two numbers diverge you get a deceptive picture: the container is
@@ -296,10 +296,10 @@ provider is optional; when both are configured, the sign-in screen shows both bu
 
 ### Roles
 
-| Role | What it sees and can do |
-|---|---|
-| **Administrator** | everything: whole profiles, the log, capture, templates, the configuration editor, settings |
-| **Viewer** | only the lists of subscriptions and aggregates: name, link, QR code and the import-into-client buttons |
+| Role              | What it sees and can do                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| **Administrator** | everything: whole profiles, the log, capture, templates, the configuration editor, settings            |
+| **Viewer**        | only the lists of subscriptions and aggregates: name, link, QR code and the import-into-client buttons |
 
 A viewer is not shown the original subscription's address, the HWID, the filter, the mimicry
 settings or the aggregate's composition — these fields are not hidden in the UI but **stripped on
@@ -324,6 +324,7 @@ groups gets administrator rights.
    built into Keycloak, and requesting a non-existent scope aborts the whole sign-in with
    `invalid_scope` — before the password form even appears. That is why `OIDC_SCOPES` defaults to
    `openid profile email`.
+
 4. Set the variables:
 
 ```bash
@@ -358,11 +359,11 @@ to the log when that happens.
 Check the log first: at startup the app reads the provider's `.well-known` itself and complains
 loudly if it did not answer. After that, it depends:
 
-| What happened | What to do |
-|---|---|
-| The provider is down and `AUTH_DISABLE_LOGIN_FORM` is not set | open `https://<domain>/?disableAutoLogin=true` and sign in with the master password — no restart needed |
-| Sign-in works but there is no role | the app shows a page listing the groups that actually arrived in the token and the claim it looked for them in. That is usually enough to fix the mapper |
-| `AUTH_DISABLE_LOGIN_FORM=true` and the provider is unreachable | unset the variable and restart the container |
+| What happened                                                  | What to do                                                                                                                                               |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The provider is down and `AUTH_DISABLE_LOGIN_FORM` is not set  | open `https://<domain>/?disableAutoLogin=true` and sign in with the master password — no restart needed                                                  |
+| Sign-in works but there is no role                             | the app shows a page listing the groups that actually arrived in the token and the claim it looked for them in. That is usually enough to fix the mapper |
+| `AUTH_DISABLE_LOGIN_FORM=true` and the provider is unreachable | unset the variable and restart the container                                                                                                             |
 
 The `?disableAutoLogin=true` parameter is named after Grafana's and does the same thing: it
 disables the automatic redirect to the provider for the current tab. Signing out sets the same flag —
@@ -375,48 +376,48 @@ separate warning: it is an event that should be noticeable.
 
 ## Environment settings
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `ADMIN_PASSWORD` | *generated* | the admin password. If unset, a random one is generated and written to the log once |
-| `AUTH_DISABLE_LOGIN_FORM` | `false` | removes password sign-in — both the button and the endpoint. Ignored if OIDC is not configured |
-| `DEMO_MODE` | `false` | **disables admin sign-in entirely.** For public demo stands only |
-| `OIDC_ISSUER` | — | the realm address, e.g. `https://auth.example.org/realms/main`. Set together with `OIDC_CLIENT_ID`, it enables provider sign-in |
-| `OIDC_CLIENT_ID` | — | the client identifier |
-| `OIDC_CLIENT_SECRET` | — | the client secret. Empty means a public client and PKCE-only sign-in |
-| `OIDC_ADMIN_GROUP` | — | the group granting administrator rights |
-| `OIDC_VIEWER_GROUP` | — | the group granting viewer rights |
-| `OIDC_GROUPS_CLAIM` | `groups` | the claim carrying group membership |
-| `OIDC_SCOPES` | `openid profile email` | the requested scopes. Groups need not be added here — see above |
-| `OIDC_AUTO_LOGIN` | `false` | skip the sign-in screen and go straight to the provider |
-| `OIDC_DISPLAY_NAME` | `OIDC` | the label on the sign-in button |
-| `OIDC_REDIRECT_URL` | from `PUBLIC_BASE_URL` | the callback address, if the app cannot see its own external address |
-| `OIDC_VERIFY_TLS` | `true` | verify the provider's certificate |
-| `DATA_DIR` | `./data` (`/data` in the image) | the directory holding the SQLite database |
-| `PUBLIC_BASE_URL` | from the request | the origin for subscription links and QR codes |
-| `COOKIE_SECURE` | `false` | set `true` when the admin UI is behind HTTPS |
-| `SESSION_TTL_HOURS` | `336` | admin session lifetime |
-| `TRUST_FORWARDED_FOR` | `true` | take the client IP from `X-Forwarded-For` |
-| `UPSTREAM_TIMEOUT` | `20` | timeout for the request to the panel, seconds |
-| `UPSTREAM_MAX_BYTES` | `8388608` | maximum size of the panel's response |
-| `UPSTREAM_PROXY` | — | HTTP/SOCKS proxy for requests to the panel |
-| `UPSTREAM_VERIFY_TLS` | `true` | verify the panel's certificate |
-| `LOG_LEVEL` | `INFO` | verbosity of the app's own log. At `INFO` the startup checks are visible — whether the OIDC provider answered |
-| `LOG_RETENTION_DAYS` | `30` | log retention, days (`0` — do not purge by time) |
-| `LOG_MAX_ROWS` | `20000` | maximum number of log records |
+| Variable                  | Default                         | Purpose                                                                                                                         |
+| ------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_PASSWORD`          | _generated_                     | the admin password. If unset, a random one is generated and written to the log once                                             |
+| `AUTH_DISABLE_LOGIN_FORM` | `false`                         | removes password sign-in — both the button and the endpoint. Ignored if OIDC is not configured                                  |
+| `DEMO_MODE`               | `false`                         | **disables admin sign-in entirely.** For public demo stands only                                                                |
+| `OIDC_ISSUER`             | —                               | the realm address, e.g. `https://auth.example.org/realms/main`. Set together with `OIDC_CLIENT_ID`, it enables provider sign-in |
+| `OIDC_CLIENT_ID`          | —                               | the client identifier                                                                                                           |
+| `OIDC_CLIENT_SECRET`      | —                               | the client secret. Empty means a public client and PKCE-only sign-in                                                            |
+| `OIDC_ADMIN_GROUP`        | —                               | the group granting administrator rights                                                                                         |
+| `OIDC_VIEWER_GROUP`       | —                               | the group granting viewer rights                                                                                                |
+| `OIDC_GROUPS_CLAIM`       | `groups`                        | the claim carrying group membership                                                                                             |
+| `OIDC_SCOPES`             | `openid profile email`          | the requested scopes. Groups need not be added here — see above                                                                 |
+| `OIDC_AUTO_LOGIN`         | `false`                         | skip the sign-in screen and go straight to the provider                                                                         |
+| `OIDC_DISPLAY_NAME`       | `OIDC`                          | the label on the sign-in button                                                                                                 |
+| `OIDC_REDIRECT_URL`       | from `PUBLIC_BASE_URL`          | the callback address, if the app cannot see its own external address                                                            |
+| `OIDC_VERIFY_TLS`         | `true`                          | verify the provider's certificate                                                                                               |
+| `DATA_DIR`                | `./data` (`/data` in the image) | the directory holding the SQLite database                                                                                       |
+| `PUBLIC_BASE_URL`         | from the request                | the origin for subscription links and QR codes                                                                                  |
+| `COOKIE_SECURE`           | `false`                         | set `true` when the admin UI is behind HTTPS                                                                                    |
+| `SESSION_TTL_HOURS`       | `336`                           | admin session lifetime                                                                                                          |
+| `TRUST_FORWARDED_FOR`     | `true`                          | take the client IP from `X-Forwarded-For`                                                                                       |
+| `UPSTREAM_TIMEOUT`        | `20`                            | timeout for the request to the panel, seconds                                                                                   |
+| `UPSTREAM_MAX_BYTES`      | `8388608`                       | maximum size of the panel's response                                                                                            |
+| `UPSTREAM_PROXY`          | —                               | HTTP/SOCKS proxy for requests to the panel                                                                                      |
+| `UPSTREAM_VERIFY_TLS`     | `true`                          | verify the panel's certificate                                                                                                  |
+| `LOG_LEVEL`               | `INFO`                          | verbosity of the app's own log. At `INFO` the startup checks are visible — whether the OIDC provider answered                   |
+| `LOG_RETENTION_DAYS`      | `30`                            | log retention, days (`0` — do not purge by time)                                                                                |
+| `LOG_MAX_ROWS`            | `20000`                         | maximum number of log records                                                                                                   |
 
 <br>
 
 ## Endpoints
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/s/{token}` | **the public subscription link** — this is what goes into the client; the token belongs either to a profile or to an aggregate |
-| `GET` | `/s/{token}/{any-suffix}` | the same; the suffix is ignored (some clients append a file name) |
-| `GET` | `/probe/{token}` | **the trap link** for capturing client data |
-| `GET` | `/auth/oidc/login` | start of provider sign-in |
-| `GET` | `/auth/oidc/callback` | return from the provider |
-| `GET` | `/healthz` | health check |
-| `GET` | `/api/docs` | Swagger |
+| Method | Path                      | Purpose                                                                                                                        |
+| ------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/s/{token}`              | **the public subscription link** — this is what goes into the client; the token belongs either to a profile or to an aggregate |
+| `GET`  | `/s/{token}/{any-suffix}` | the same; the suffix is ignored (some clients append a file name)                                                              |
+| `GET`  | `/probe/{token}`          | **the trap link** for capturing client data                                                                                    |
+| `GET`  | `/auth/oidc/login`        | start of provider sign-in                                                                                                      |
+| `GET`  | `/auth/oidc/callback`     | return from the provider                                                                                                       |
+| `GET`  | `/healthz`                | health check                                                                                                                   |
+| `GET`  | `/api/docs`               | Swagger                                                                                                                        |
 
 Internal, behind an administrator session: `/api/config` (read, `/validate`, apply), `/api/export`,
 `/api/import`, `/api/templates`, `/api/aggregates`, `/api/probe`, `/api/filter/test`. A viewer only
@@ -460,14 +461,14 @@ can be switched by hand — each one shows import buttons for its specific clien
 There are five sections: "Profiles", "Aggregates", "Capture", "Logs", "Settings". A viewer sees the
 first two — the rest are hidden in the UI and closed on the server.
 
-* **Desktop** — a navigation rail on the left, centred dialogs, a two-column profile grid on wide screens.
-* **Mobile** — bottom navigation, a bottom sheet that closes by dragging down, `safe-area-inset`
+- **Desktop** — a navigation rail on the left, centred dialogs, a two-column profile grid on wide screens.
+- **Mobile** — bottom navigation, a bottom sheet that closes by dragging down, `safe-area-inset`
   accounted for around notches and the gesture bar, touch targets no smaller than 48 px, 16 px input
   fields (so iOS does not zoom the viewport), `overscroll-behavior: contain` in scrollable areas,
   `content-visibility` on long lists. The back gesture closes an open sheet rather than leaving the
   app, and does so through `CloseWatcher` — which is why recent Android versions show a gesture
   preview. Where `CloseWatcher` is missing, a history-entry fallback works without the preview.
-* `prefers-reduced-motion` and `prefers-contrast` are honoured.
+- `prefers-reduced-motion` and `prefers-contrast` are honoured.
 
 <br>
 
@@ -510,27 +511,27 @@ source.
 
 ## Security
 
-* There is a single administrator password, sessions are server-side, and the cookie is
+- There is a single administrator password, sessions are server-side, and the cookie is
   `HttpOnly`/`SameSite=Lax`; turn on `COOKIE_SECURE=true` behind HTTPS.
-* Provider sign-in is authorization code with PKCE. The `id_token` is validated against the JWKS:
+- Provider sign-in is authorization code with PKCE. The `id_token` is validated against the JWKS:
   signature, issuer, audience, expiry and the `nonce` that binds the token to one specific sign-in
   attempt. A started attempt is single-use: the `state` is deleted on first use, so a leaked
   callback address cannot be replayed. The `next` parameter is only accepted as a relative one — an
   open redirect on a sign-in page is exactly what makes a phishing link convincing.
-* Viewer rights are trimmed on the server, not in the UI: the panel address, HWIDs and filters never
+- Viewer rights are trimmed on the server, not in the UI: the panel address, HWIDs and filters never
   enter the API response, so they cannot be pulled out of the browser around the interface.
-* `DEMO_MODE=true` **removes sign-in entirely**: anyone who opens the app can change profiles, read
+- `DEMO_MODE=true` **removes sign-in entirely**: anyone who opens the app can change profiles, read
   the log and export the configuration along with the subscription tokens. The mode announces itself
   with a warning in the log at startup and an unremovable banner in the UI. So that a demo stand
   cannot be used as an open proxy into its own host's internal network, this mode forbids upstreams
   whose names resolve to private, loopback and special-use addresses. Do not enable it where real
   subscriptions live.
-* Password guessing is rate-limited: 10 failed attempts from an address within 5 minutes and
+- Password guessing is rate-limited: 10 failed attempts from an address within 5 minutes and
   sign-in is blocked.
-* Only an allow-list of request headers goes upstream and only an allow-list of response headers
+- Only an allow-list of request headers goes upstream and only an allow-list of response headers
   comes back down: the panel's `Set-Cookie`, its `Server` and the rest never reach the client.
-* A subscription link can be reissued in one click — the old one stops working instantly.
-* The original subscription's address is set by the administrator and is not restricted in any way:
+- A subscription link can be reissued in one click — the old one stops working instantly.
+- The original subscription's address is set by the administrator and is not restricted in any way:
   the panel often lives on an internal network, and banning internal addresses would break the
   ordinary self-hosting scenario. Access to the admin UI is therefore equivalent to the right to
   make the server fetch an arbitrary address — do not hand it to people you do not trust. The
@@ -541,3 +542,7 @@ source.
 ## License
 
 MIT.
+
+## Development standard
+
+This repository adopts version 0.4.0 of the shared development standard. Read the [English guide](docs/en/development-standard.md) or [Russian guide](docs/ru/development-standard.md). The local toolkit checks staged secrets, changed-file formatting and bilingual documentation before merge. Existing product CI remains in place. Adoption is in progress; product acceptance and legacy-document translation are recorded separately in .repo-policy.json.
